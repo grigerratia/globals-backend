@@ -43,6 +43,18 @@ function resolveChromePath() {
 // Inicializar Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+let serviceAccount = {};
+try {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  } else {
+    // Intentar leer de archivo local usando node fs (importado arriba) si fuera necesario
+    // Pero asumimos que está en env para producción.
+  }
+} catch (e) {
+  console.error("Error parseando firebase-service-account", e);
+}
+
 initializeApp({
   credential: cert(serviceAccount)
 });
@@ -396,16 +408,6 @@ app.listen(PORT, () => {
 
 
 
-let serviceAccount = {};
-try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  } else if (fs.existsSync('./firebase-service-account.json')) {
-    serviceAccount = JSON.parse(fs.readFileSync('./firebase-service-account.json', 'utf8'));
-  }
-} catch (e) {
-  console.error("Error cargando firebase-service-account", e);
-}
 
 
 
