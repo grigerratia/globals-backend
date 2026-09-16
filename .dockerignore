@@ -1,4 +1,8 @@
 node_modules
 .wwebjs_auth
+.wwebjs_cache
+.chrome-libs
 .env
 .git
+qr.txt
+wa_qr.log
