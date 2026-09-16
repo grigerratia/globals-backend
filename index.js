@@ -415,6 +415,20 @@ client.initialize();
 
 app.listen(PORT, () => {
   console.log(`Servidor Express escuchando en http://localhost:${PORT}`);
+
+  // Keep-alive: hacer ping cada 14 minutos para que Render no duerma el servidor
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL || process.env.RENDER_SERVICE_URL;
+  if (RENDER_URL) {
+    setInterval(async () => {
+      try {
+        const res = await fetch(`${RENDER_URL}/health`);
+        console.log(`[KEEP-ALIVE] Ping exitoso: ${res.status}`);
+      } catch (e) {
+        console.error('[KEEP-ALIVE] Error en ping:', e.message);
+      }
+    }, 14 * 60 * 1000); // Cada 14 minutos
+    console.log('[KEEP-ALIVE] Auto-ping activado cada 14 minutos');
+  }
 });
 // CRON JOB para notificaciones
 
