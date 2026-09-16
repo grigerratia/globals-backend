@@ -46,7 +46,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 let serviceAccount = {};
 try {
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    // Decodificar desde base64 para evitar problemas con caracteres especiales
+    const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT, 'base64').toString('utf8');
+    serviceAccount = JSON.parse(decoded);
   } else if (fs.existsSync('./firebase-service-account.json')) {
     serviceAccount = JSON.parse(fs.readFileSync('./firebase-service-account.json', 'utf8'));
   }
