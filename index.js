@@ -47,9 +47,8 @@ let serviceAccount = {};
 try {
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  } else {
-    // Intentar leer de archivo local usando node fs (importado arriba) si fuera necesario
-    // Pero asumimos que está en env para producción.
+  } else if (fs.existsSync('./firebase-service-account.json')) {
+    serviceAccount = JSON.parse(fs.readFileSync('./firebase-service-account.json', 'utf8'));
   }
 } catch (e) {
   console.error("Error parseando firebase-service-account", e);
