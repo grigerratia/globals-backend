@@ -348,6 +348,8 @@ client.on('message_create', async (message) => {
 // ==========================================
 // 4. Escuchar cambios de estado en Supabase
 // ==========================================
+const recentUpdates = new Set();
+
 supabase
   .channel('backend-estado-updates')
   .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'proyectos' }, async (payload) => {
@@ -356,6 +358,16 @@ supabase
 
     // Solo notificar si el estado cambió, no es 'Archivado' y tenemos teléfono
     if (oldRecord.estado !== newRecord.estado && newRecord.estado !== 'Archivado' && newRecord.cliente_telefono) {
+      
+      // Evitar doble evento (deduplicación por 5 segundos)
+      const dedupeKey = `${newRecord.id}-${newRecord.estado}`;
+      if (recentUpdates.has(dedupeKey)) {
+        console.log(`[DEDUPE] Saltando evento duplicado para ${dedupeKey}`);
+        return;
+      }
+      recentUpdates.add(dedupeKey);
+      setTimeout(() => recentUpdates.delete(dedupeKey), 5000);
+
       console.log(`[🔄 CAMBIO DE ESTADO] Proyecto "${newRecord.titulo}" -> "${newRecord.estado}"`);
       
       const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
@@ -386,9 +398,13 @@ supabase
         
         // Enviar WA a encargados mapeados (con delay de 60s)
         for (const encargado of newRecord.encargados) {
-          if (!encargado.nombre) continue;
+          if (!encargado.nombre) {
+            console.log(`[WHATSAPP] Saltando encargado sin nombre`);
+            continue;
+          }
           let num = null;
           const nom = encargado.nombre.toLowerCase();
+          
           if (nom.includes("griger")) num = "584248037379";
           else if (nom.includes("idalys")) num = "584122966969";
           
@@ -400,8 +416,12 @@ supabase
             } catch (err) {
               console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
             }
+          } else {
+            console.log(`[WHATSAPP] No se encontró un número mapeado para el encargado: ${encargado.nombre}`);
           }
         }
+      } else {
+        console.log(`[WHATSAPP] El proyecto no tiene encargados asignados para enviar WS.`);
       }
     }
   })
