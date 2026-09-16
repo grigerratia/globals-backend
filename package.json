@@ -10,14 +10,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "12.3.4",
-      "onFail": "download"
-    }
-  },
-  "packageManager": "pnpm@12.3.4",
   "type": "module",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
