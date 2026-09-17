@@ -145,13 +145,6 @@ Caso 3: Si ya tienes los detalles del pedido, su nombre, TELÉFONO y empresa (o 
 }`;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({
-  model: 'gemini-1.5-flash',
-  systemInstruction: SYSTEM_PROMPT,
-  generationConfig: {
-    responseMimeType: 'application/json',
-  },
-});
 
 // Asegurar que la columna 'En Conversación' exista en Supabase al arrancar
 async function asegurarColumna() {
@@ -392,12 +385,43 @@ async function connectToWhatsApp() {
       if (textMessage && textMessage.trim() !== '') {
         console.log(`[BOT] Mensaje recibido de ${remoteJid}: ${textMessage}`);
         
-        const chatSession = model.startChat({
-          history: [] 
-        });
+        
+        const modelosATestar = [
+          'gemini-3.8-flash',
+          'gemini-3.5-flash-lite',
+          'gemini-3.1-flash-lite',
+          'gemini-flash-latest',
+          'gemini-flash-lite-latest'
+        ];
+        
+        let classification = null;
+        let success = false;
+        
+        for (const modelName of modelosATestar) {
+          try {
+            console.log(`[BOT] Intentando responder con el modelo: ${modelName}`);
+            const model = genAI.getGenerativeModel({
+              model: modelName,
+              systemInstruction: SYSTEM_PROMPT,
+              generationConfig: {
+                responseMimeType: 'application/json',
+              },
+            });
+            
+            const chatSession = model.startChat({ history: [] });
+            const result = await chatSession.sendMessage(textMessage);
+            classification = parseClassification(result.response.text());
+            success = true;
+            break; // Salimos del for loop si tuvo éxito
+          } catch (modelErr) {
+            console.error(`[BOT] Falló el modelo ${modelName}: ${modelErr.message}`);
+          }
+        }
+        
+        if (!success || !classification) {
+           throw new Error("Todos los modelos de Gemini fallaron o están saturados.");
+        }
 
-        const result = await chatSession.sendMessage(textMessage);
-        const classification = parseClassification(result.response.text());
 
         if (classification.tipo === 'conversacion') {
           await sock.sendMessage(remoteJid, { text: classification.respuesta });
