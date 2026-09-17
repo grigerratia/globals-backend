@@ -386,6 +386,26 @@ async function connectToWhatsApp() {
         console.log(`[BOT] Mensaje recibido de ${remoteJid}: ${textMessage}`);
         
         
+
+        const phoneNumber = remoteJid.split('@')[0];
+        
+        // Buscar si el cliente ya tiene proyectos
+        const { data: clientProjects } = await supabase
+          .from('proyectos')
+          .select('titulo, estado, notas, fecha_entrega')
+          .ilike('cliente_telefono', `%${phoneNumber}%`)
+          .order('fecha_ultima_actualizacion', { ascending: false })
+          .limit(3);
+
+        let dynamicPrompt = SYSTEM_PROMPT;
+        if (clientProjects && clientProjects.length > 0) {
+          const projectList = clientProjects.map(p => 
+            `- Título: ${p.titulo}, Estado: ${p.estado}, Notas: ${p.notas}, Entrega: ${p.fecha_entrega || 'N/A'}`
+          ).join('\n');
+          
+          dynamicPrompt += `\n\n¡IMPORTANTE! Este cliente YA TIENE los siguientes proyectos registrados en el sistema:\n${projectList}\n\nSi el cliente está preguntando por el estatus de su pedido, infórmale cordialmente basándote en esta información y NO generes un nuevo proyecto (usa tipo: conversacion). Si el cliente está pidiendo algo COMPLETAMENTE NUEVO, entonces sí pide los datos faltantes para crear un nuevo proyecto.`;
+        }
+
         const modelosATestar = [
           'gemini-3.8-flash',
           'gemini-3.5-flash-lite',
@@ -402,11 +422,12 @@ async function connectToWhatsApp() {
             console.log(`[BOT] Intentando responder con el modelo: ${modelName}`);
             const model = genAI.getGenerativeModel({
               model: modelName,
-              systemInstruction: SYSTEM_PROMPT,
+              systemInstruction: dynamicPrompt,
               generationConfig: {
                 responseMimeType: 'application/json',
               },
             });
+
             
             
             let userHistory = activeChats.get(remoteJid) || [];
@@ -563,11 +584,27 @@ cron.schedule("0 8 * * *", async () => {
       }
     }
     
+    
+    if (pry.levantamiento_fecha) {
+      const fechaLevantamiento = new Date(pry.levantamiento_fecha);
+      fechaLevantamiento.setHours(0,0,0,0);
+      const diffLevantamiento = Math.round((fechaLevantamiento - hoyNorm) / (1000 * 60 * 60 * 24));
+      
+      if (diffLevantamiento === 1) {
+        msj += (msj ? '\n\n' : '') + `⚠️ *LEVANTAMIENTO MAÑANA*\nEl proyecto "${pry.titulo}" tiene levantamiento MAÑANA (${fechaLevantamiento.toLocaleDateString()}).`;
+        necesitaAlerta = true;
+      } else if (diffLevantamiento === 0) {
+        msj += (msj ? '\n\n' : '') + `🚨 *LEVANTAMIENTO HOY*\nEl proyecto "${pry.titulo}" tiene levantamiento HOY.`;
+        necesitaAlerta = true;
+      }
+    }
+    
     if (!necesitaAlerta && pry.fecha_ultima_actualizacion) {
+
       const fechaUltima = new Date(pry.fecha_ultima_actualizacion);
       fechaUltima.setHours(0,0,0,0);
       const diasEstancado = Math.floor((hoyNorm - fechaUltima) / (1000 * 60 * 60 * 24));
-      if (diasEstancado >= 3) {
+      if (diasEstancado >= 2) {
         msj = `⏳ *PROYECTO ESTANCADO*\nEl proyecto "${pry.titulo}" lleva ${diasEstancado} días sin avanzar.\nFase actual: ${pry.estado}`;
         necesitaAlerta = true;
       }
