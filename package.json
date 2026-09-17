@@ -20,7 +20,7 @@
     "firebase-admin": "^14.4.0",
     "node-cron": "^4.6.0",
     "qrcode": "^1.5.4",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js"
+    "@whiskeysockets/baileys": "^6.7.9",
+    "pino": "^9.4.0"
   }
 }

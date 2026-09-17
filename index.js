@@ -11,10 +11,8 @@ import { createClient } from '@supabase/supabase-js';
 import express from 'express';
 import cors from 'cors';
 import qrcodeData from 'qrcode';
-import qrcode from 'qrcode-terminal';
-import pkg from 'whatsapp-web.js';
-
-const { Client, LocalAuth } = pkg;
+import { default as makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import pino from 'pino';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const chromeLibs = path.join(__dirname, '.chrome-libs/usr/lib/x86_64-linux-gnu');
@@ -208,245 +206,51 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  authTimeoutMs: 0,
-  puppeteer: {
-    headless: true,
-    executablePath: resolveChromePath(),
-    timeout: 0,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--single-process'
-    ],
-  },
-});
+let clientSocket = null;
 
-client.on('qr', async (qr) => {
-  console.log('[WHATSAPP] QR Event recibido.');
-  waState = 'QR_READY';
-  try {
-    latestQrDataUrl = await qrcodeData.toDataURL(qr);
-  } catch(e) {
-    console.error('Error al generar QR data URL:', e);
-  }
+async function connectToWhatsApp() {
+  const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+  
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' })
+  });
+  
+  clientSocket = sock;
 
-  console.log('=========================================');
-  console.log('Escanea este QR con WhatsApp para conectar el backend:');
-  qrcode.generate(qr, { small: true }, (qrStr) => { fs.writeFileSync('qr.txt', qrStr); console.log(qrStr); });
-  console.log('=========================================');
-});
+  sock.ev.on('creds.update', saveCreds);
 
-client.on('ready', () => {
-  waState = 'CONNECTED';
-  latestQrDataUrl = null;
-
-  console.log('Cliente de WhatsApp listo y escuchando mensajes!');
-});
-
-const chatMemory = new Map();
-
-client.on('message_create', async (message) => {
-  try {
-    console.log(`[🔍 ESPÍA] De: ${message.from} | Texto: "${message.body}"`);
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
     
-    if (message.fromMe) return;
-    
-    // Helper para obtener el ID de un grupo o chat
-    if (message.body.trim() === '!id') {
-      await message.reply(`El ID de este chat/grupo es: ${message.from}`);
-      return;
-    }
-
-    if (message.from.endsWith('@g.us')) return; // Ignora el resto de grupos
-    if (message.from === 'status@broadcast') return; // Ignora los Estados/Historias
-
-    const text = (message.body || '').trim();
-    if (!text) return;
-
-    // 1. Manejo de Historial en Memoria (Súper rápido y sin errores de librería)
-    const chatId = message.from;
-    if (!chatMemory.has(chatId)) {
-      chatMemory.set(chatId, []);
-    }
-    const history = chatMemory.get(chatId);
-    history.push(`Cliente: ${text}`);
-
-    // Limitar memoria a últimos 10 mensajes para no saturar
-    if (history.length > 10) history.shift();
-
-    let historialTexto = "HISTORIAL DE CONVERSACIÓN RECIENTE:\n" + history.join('\n');
-    historialTexto += `\n\nINSTRUCCIÓN: Responde al último mensaje usando el JSON requerido.`;
-
-    // 2. Clasificar / Conversar con Gemini (con reintentos en caso de fallo de red)
-    let raw = "";
-    let intentos = 0;
-    while (intentos < 3) {
+    if (qr) {
+      console.log('[WHATSAPP] QR Event recibido.');
+      waState = 'QR_READY';
       try {
-        const result = await model.generateContent(historialTexto);
-        raw = result.response.text();
-        break; // Éxito
-      } catch (err) {
-        intentos++;
-        console.error(`⚠️ Fallo de red con Gemini (intento ${intentos}/3):`, err.message);
-        if (intentos === 3) throw err;
-        await new Promise(r => setTimeout(r, 2000)); // Esperar 2s antes de reintentar
+        latestQrDataUrl = await qrcodeData.toDataURL(qr);
+      } catch(e) {
+        console.error('Error al generar QR data URL:', e);
       }
     }
-    
-    const iaResponse = parseClassification(raw);
 
-    console.log('🤖 Decisión de Gemini:', iaResponse);
-
-    // 3. Tomar acción
-    if (iaResponse.tipo === 'conversacion') {
-      history.push(`Asistente: ${iaResponse.respuesta}`);
-      await message.reply(iaResponse.respuesta);
-    } 
-    else if (iaResponse.tipo === 'proyecto_listo') {
-      
-      // Obtener el número REAL del cliente, porque message.from puede ser un @lid
-      let telefonoWS = iaResponse.cliente_telefono || chatId.split('@')[0];
-
-      // Guardaremos Nombre y Empresa de manera bonita dentro de las Notas 
-      // (así evitamos crashear si las columnas aún no existen en Supabase)
-      const nombreCliente = iaResponse.nombre_cliente || 'No especificado';
-      const empresaCliente = iaResponse.empresa || 'No especificada';
-      
-      const notasFormateadas = `👤 Cliente: ${nombreCliente}\n🏢 Empresa: ${empresaCliente}\n\n[Detalles del Pedido]\n${iaResponse.notas}`;
-
-      const { error: dbError } = await supabase.from('proyectos').insert([
-        {
-          titulo: iaResponse.titulo,
-          cliente_telefono: telefonoWS,
-          notas: notasFormateadas,
-          estado: iaResponse.estado || 'En Conversación',
-          orden: 999,
-          encargados: [{ nombre: 'Asignar', rol: 'Líder Comercial' }]
-        },
-      ]);
-
-      if (dbError) {
-        console.error('Error al guardar en Supabase:', dbError.message);
-        await message.reply("Hubo un problema interno, un humano te atenderá.");
+    if (connection === 'close') {
+      const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('[WHATSAPP] Conexión cerrada. ¿Reconectar?', shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(connectToWhatsApp, 2000);
       } else {
-        console.log('✅ Proyecto creado con éxito.');
-        await message.reply(`¡Perfecto! Hemos registrado tu solicitud sobre "${iaResponse.titulo}".\nUn miembro de nuestro equipo te contactará muy pronto para continuar.`);
-        // Limpiamos la memoria porque ya se creó el proyecto
-        history.push(`Asistente: ¡Perfecto! Hemos registrado tu solicitud sobre "${iaResponse.titulo}".\nUn miembro de nuestro equipo te contactará muy pronto para continuar.`);
-        if (history.length > 15) history.splice(0, history.length - 10);
+        waState = 'DISCONNECTED';
       }
-    }
-  } catch (error) {
-    if (error.status === 429) {
-      console.log('⏳ Límite de Gemini alcanzado (5 por minuto). Esperando a que se enfríe...');
-      // Opcional: Podrías hacer que el bot responda un mensaje genérico sin IA
-      // await message.reply("¡Hola! Hemos recibido tu mensaje. Un agente te atenderá en breve.");
-    } else {
-      console.error('Error al procesar el mensaje:', error);
-    }
-  }
-});
-
-// ==========================================
-// 4. Escuchar cambios de estado en Supabase
-// ==========================================
-const recentUpdates = new Set();
-
-supabase
-  .channel('backend-estado-updates')
-  .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'proyectos' }, async (payload) => {
-    const oldRecord = payload.old;
-    const newRecord = payload.new;
-
-    // Solo notificar si el estado cambió, no es 'Archivado' y tenemos teléfono
-    if (oldRecord.estado !== newRecord.estado && newRecord.estado !== 'Archivado' && newRecord.cliente_telefono) {
-      
-      // Evitar doble evento (deduplicación por 5 segundos)
-      const dedupeKey = `${newRecord.id}-${newRecord.estado}`;
-      if (recentUpdates.has(dedupeKey)) {
-        console.log(`[DEDUPE] Saltando evento duplicado para ${dedupeKey}`);
-        return;
-      }
-      recentUpdates.add(dedupeKey);
-      setTimeout(() => recentUpdates.delete(dedupeKey), 5000);
-
-      console.log(`[🔄 CAMBIO DE ESTADO] Proyecto "${newRecord.titulo}" -> "${newRecord.estado}"`);
-      
-      const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
-      
-      // Validación básica para saber si es un número válido de WhatsApp (al menos 10 dígitos)
-      if (numeroLimpiado.length >= 10) {
-        const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha avanzado a la etapa: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
-        
-        try {
-          const chatId = `${numeroLimpiado}@c.us`;
-          // COMENTADO TEMPORALMENTE PARA EVITAR RIESGOS DE BANEO:
-          // await client.sendMessage(chatId, mensaje);
-          // console.log(`✅ Notificación enviada a ${numeroLimpiado}`);
-          console.log(`[SIMULACIÓN] Mensaje que se habría enviado a ${numeroLimpiado}: ${mensaje}`);
-        } catch (err) {
-          console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message);
-        }
-      }
-
-      // Enviar notificaciones PUSH y WA a los encargados
-      if (newRecord.encargados && newRecord.encargados.length > 0) {
-        const userIds = newRecord.encargados.filter(e => e.user_id).map(e => e.user_id);
-        const pushMsg = "El proyecto " + newRecord.titulo + " avanzó a: " + newRecord.estado;
-        
-        if (userIds.length > 0) {
-          await enviarPushNotificacion("Actualización de Proyecto", pushMsg, userIds);
-        }
-        
-        // Enviar WA a encargados mapeados (con delay de 60s)
-        for (const encargado of newRecord.encargados) {
-          if (!encargado.nombre) {
-            console.log(`[WHATSAPP] Saltando encargado sin nombre`);
-            continue;
-          }
-          
-          let num = null;
-          
-          // 1. Intentar usar el teléfono dinámico (si el frontend lo envió)
-          if (encargado.telefono) {
-            num = encargado.telefono.replace(/[^0-9]/g, '');
-          } 
-          // 2. Fallback: mapeo estático para tarjetas viejas
-          else {
-            const nom = encargado.nombre.toLowerCase();
-            if (nom.includes("griger")) num = "584248037379";
-            else if (nom.includes("idalys")) num = "584122966969";
-          }
-          
-          if (num && num.length >= 10) {
-            try {
-              await client.sendMessage(`${num}@c.us`, `⚠️ *Actualización de Proyecto*\n${pushMsg}`);
-              console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
-              await sleep(60000); // 60s delay
-            } catch (err) {
-              console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
-            }
-          } else {
-            console.log(`[WHATSAPP] No se encontró un número mapeado para el encargado: ${encargado.nombre}`);
-          }
-        }
-      } else {
-        console.log(`[WHATSAPP] El proyecto no tiene encargados asignados para enviar WS.`);
-      }
-    }
-  })
-  .subscribe((status) => {
-    if (status === 'SUBSCRIBED') {
-      console.log('Backend suscrito a cambios de estado en Supabase');
+    } else if (connection === 'open') {
+      console.log('[WHATSAPP] Client is ready!');
+      waState = 'CONNECTED';
+      latestQrDataUrl = null;
     }
   });
+}
 
-client.initialize();
+connectToWhatsApp();
 
 app.listen(PORT, () => {
   console.log(`Servidor Express escuchando en http://localhost:${PORT}`);
@@ -561,7 +365,7 @@ cron.schedule("0 8 * * *", async () => {
 
       if (num) {
         try {
-          await client.sendMessage(`${num}@c.us`, alerta.mensaje);
+          await clientSocket.sendMessage(`${num}@c.us`.replace('@c.us', '@s.whatsapp.net'), { text: alerta.mensaje });
           console.log(`[WHATSAPP-CRON] Mensaje enviado a ${encargado.nombre} (${num})`);
           await sleep(15000);
         } catch(e) {
