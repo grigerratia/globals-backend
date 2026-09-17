@@ -437,16 +437,23 @@ async function connectToWhatsApp() {
           activeChats.delete(remoteJid);
           await sock.sendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
           
-          await supabase.from('proyectos').insert([{
+          
+          const { error: insertErr } = await supabase.from('proyectos').insert([{
             titulo: classification.titulo,
-            nombre_cliente: classification.nombre_cliente,
-            empresa: classification.empresa,
+            cliente_nombre: classification.nombre_cliente,
+            cliente_empresa: classification.empresa,
             cliente_telefono: classification.cliente_telefono,
             notas: classification.notas,
             estado: classification.estado || 'En Conversación',
             fecha_entrega: null
           }]);
-          console.log('[BOT] Proyecto creado en base de datos desde WhatsApp');
+          
+          if (insertErr) {
+            console.error('[BOT] Error al guardar proyecto en DB:', insertErr);
+          } else {
+            console.log('[BOT] Proyecto creado en base de datos desde WhatsApp');
+          }
+
         }
       }
     } catch (err) {
