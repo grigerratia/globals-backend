@@ -110,8 +110,7 @@ async function enviarPushNotificacion(titulo, body, userIds) {
 }
 
 
-const SYSTEM_PROMPT = `Eres el agente inteligente de ventas de la agencia de publicidad Global's.
-Tu objetivo es conversar con el cliente por WhatsApp de forma amable, corta y persuasiva.
+const SYSTEM_PROMPT = `Eres el asistente virtual de Global's, una agencia de publicidad y marketing en Venezuela. Tu tono debe ser cálido y amable, pero siempre manteniendo la profesionalidad y formalidad. Saluda y despídete con cordialidad, usando un lenguaje respetuoso. Evita usar demasiados emojis o exceso de coloquialismos. Tu objetivo es recabar información del cliente para generar requerimientos claros y devolver un JSON estructurado.
 Para registrar el pedido, NECESITAS recolectar OBLIGATORIAMENTE esta información:
 1. Qué servicio/producto necesita y sus detalles básicos (medidas, material).
 2. El Nombre del cliente.
@@ -121,10 +120,10 @@ Para registrar el pedido, NECESITAS recolectar OBLIGATORIAMENTE esta informació
 REGLAS ESTRICTAS DE RESPUESTA:
 Debes responder SIEMPRE y ÚNICAMENTE con un objeto JSON válido (sin formato markdown ni texto extra).
 
-Caso 1: Si falta información (detalles, nombre, o teléfono), mantén la conversación viva:
+Caso 1: Si falta información (detalles, nombre, empresa, o teléfono), mantén la conversación viva para solicitar lo que falta:
 {
   "tipo": "conversacion",
-  "respuesta": "Hola! 👋 Claro que sí, ¿cuéntame de qué tamaño aproximado te gustaría el letrero y a nombre de quién lo registro? Y me podrías regalar un número de teléfono de contacto?"
+  "respuesta": "¡Hola! Con gusto le ayudamos con su requerimiento. ¿Me podría indicar las medidas aproximadas y a nombre de quién registramos la solicitud?"
 }
 
 Caso 2: Si el usuario solo está agradeciendo, diciendo 'ok', 'vale', o despidiéndose (después de que ya registraste su pedido o durante la charla), o si YA creaste el proyecto en mensajes anteriores, NO pidas más datos ni envíes proyecto_listo de nuevo, solo despídete amablemente:
@@ -201,6 +200,7 @@ app.get('/health', (_req, res) => {
 
 
 const recentUpdates = new Set();
+const activeChats = new Map();
 
 
 
@@ -408,9 +408,17 @@ async function connectToWhatsApp() {
               },
             });
             
-            const chatSession = model.startChat({ history: [] });
+            
+            let userHistory = activeChats.get(remoteJid) || [];
+            
+            const chatSession = model.startChat({ history: userHistory });
             const result = await chatSession.sendMessage(textMessage);
+            
+            userHistory = await chatSession.getHistory();
+            activeChats.set(remoteJid, userHistory);
+            
             classification = parseClassification(result.response.text());
+
             success = true;
             break; // Salimos del for loop si tuvo éxito
           } catch (modelErr) {
@@ -426,6 +434,7 @@ async function connectToWhatsApp() {
         if (classification.tipo === 'conversacion') {
           await sock.sendMessage(remoteJid, { text: classification.respuesta });
         } else if (classification.tipo === 'proyecto_listo') {
+          activeChats.delete(remoteJid);
           await sock.sendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
           
           await supabase.from('proyectos').insert([{
