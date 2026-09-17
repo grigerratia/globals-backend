@@ -146,7 +146,7 @@ Caso 3: Si ya tienes los detalles del pedido, su nombre, TELÉFONO y empresa (o 
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({
-  model: 'gemini-3.6-flash',
+  model: 'gemini-1.5-flash',
   systemInstruction: SYSTEM_PROMPT,
   generationConfig: {
     responseMimeType: 'application/json',
@@ -386,6 +386,7 @@ async function connectToWhatsApp() {
       if (!msg.message || msg.key.fromMe) return;
 
       const remoteJid = msg.key.remoteJid;
+      if (remoteJid.includes("@g.us")) return;
       const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
 
       if (textMessage && textMessage.trim() !== '') {
