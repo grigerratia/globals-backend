@@ -183,7 +183,20 @@ app.use(express.json());
 let waState = 'DISCONNECTED';
 let latestQrDataUrl = null;
 
+// Endpoint para chequear la memoria (Qué tan apretado está el backend)
+app.get('/api/metrics', (req, res) => {
+  const used = process.memoryUsage();
+  const memoryInfo = {
+    rss: `${Math.round(used.rss / 1024 / 1024 * 100) / 100} MB (Memoria total del proceso)`,
+    heapTotal: `${Math.round(used.heapTotal / 1024 / 1024 * 100) / 100} MB (Tamaño del heap)`,
+    heapUsed: `${Math.round(used.heapUsed / 1024 / 1024 * 100) / 100} MB (Heap en uso)`,
+    sistema_libre: `${Math.round(os.freemem() / 1024 / 1024)} MB`,
+    sistema_total: `${Math.round(os.totalmem() / 1024 / 1024)} MB`
+  };
+  res.json(memoryInfo);
+});
 
+// Endpoint principal para el estado de WhatsApp
 app.get('/api/whatsapp/status', (_req, res) => {
   res.json({
     status: waState,
