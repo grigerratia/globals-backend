@@ -130,7 +130,7 @@ Caso 1: Si falta información (detalles, nombre, o teléfono), mantén la conver
 Caso 2: Si el usuario solo está agradeciendo, diciendo 'ok', 'vale', o despidiéndose (después de que ya registraste su pedido o durante la charla), o si YA creaste el proyecto en mensajes anteriores, NO pidas más datos ni envíes proyecto_listo de nuevo, solo despídete amablemente:
 {
   "tipo": "conversacion",
-  "respuesta": "¡De nada! Quedamos a tu entera disposición. Un miembro de nuestro equipo te escribirá pronto."
+  "respuesta": "Entendido. La información ha sido registrada. Un miembro de nuestro equipo comercial se comunicará a la brevedad posible."
 }
 
 Caso 3: Si ya tienes los detalles del pedido, su nombre, TELÉFONO y empresa (o si dijo que no tiene empresa) y es el momento de crear el proyecto en el sistema:
@@ -220,6 +220,41 @@ supabase
     const oldRecord = payload.old;
     const newRecord = payload.new;
 
+    
+    // Detectar si se agregó un encargado nuevo
+    const oldEnc = oldRecord.encargados || [];
+    const newEnc = newRecord.encargados || [];
+    
+    // Buscar encargados que están en newEnc pero no en oldEnc (comparando id o user_id)
+    const agregados = newEnc.filter(n => !oldEnc.some(o => (o.user_id && o.user_id === n.user_id) || (o.id && o.id === n.id) || (o.nombre === n.nombre)));
+    
+    if (agregados.length > 0) {
+      console.log(`[👥 NUEVO ENCARGADO] En proyecto "${newRecord.titulo}"`);
+      for (const enc of agregados) {
+        if (enc.user_id) {
+          await enviarPushNotificacion("Nuevo Proyecto Asignado", `Fuiste asignado al proyecto: ${newRecord.titulo}`, [enc.user_id]);
+        }
+        let num = null;
+        if (enc.telefono) num = enc.telefono.replace(/[^0-9]/g, '');
+        else {
+           const nom = enc.nombre ? enc.nombre.toLowerCase() : '';
+           if (nom.includes("griger")) num = "584248037379";
+           else if (nom.includes("idalys")) num = "584122966969";
+        }
+        if (num && num.length >= 10) {
+           try {
+             if (clientSocket && waState === 'CONNECTED') {
+                await clientSocket.sendMessage(`${num}@s.whatsapp.net`, { text: `📌 *Nuevo Proyecto Asignado*\nHas sido asignado al proyecto: *${newRecord.titulo}*.` });
+                console.log(`[WHATSAPP] Aviso de asignación a ${enc.nombre} (${num})`);
+                await sleep(5000);
+             }
+           } catch(e) {
+             console.error(`Error avisando asignación a ${enc.nombre}:`, e.message);
+           }
+        }
+      }
+    }
+
     if (oldRecord.estado !== newRecord.estado && newRecord.estado !== 'Archivado') {
       
       const dedupeKey = `${newRecord.id}-${newRecord.estado}`;
@@ -235,14 +270,14 @@ supabase
       if (newRecord.cliente_telefono) {
         const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
         if (numeroLimpiado.length >= 10) {
-          const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha avanzado a la etapa: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
+          const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha sido movido a la columna: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
           
           try {
             const chatId = `${numeroLimpiado}@s.whatsapp.net`;
             if (clientSocket && waState === 'CONNECTED') {
-               clientSocket.sendMessage(chatId, { text: mensaje })
-                 .then(() => console.log(`✅ Notificación enviada a ${numeroLimpiado}`))
-                 .catch(err => console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message));
+               // clientSocket.sendMessage(chatId, { text: mensaje })
+                 // .then(() => console.log(`✅ Notificación enviada a ${numeroLimpiado}`))
+                 // .catch(err => console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message));
             } else {
                console.log(`[SIMULACIÓN] Mensaje que se habría enviado a ${numeroLimpiado}: ${mensaje}`);
             }
@@ -255,7 +290,7 @@ supabase
       // Enviar notificaciones PUSH y WA a los encargados
       if (newRecord.encargados && newRecord.encargados.length > 0) {
         const userIds = newRecord.encargados.filter(e => e.user_id).map(e => e.user_id);
-        const pushMsg = "El proyecto " + newRecord.titulo + " avanzó a: " + newRecord.estado;
+        const pushMsg = "El proyecto " + newRecord.titulo + " fue movido a la columna: " + newRecord.estado;
         
         if (userIds.length > 0) {
           await enviarPushNotificacion("Actualización de Proyecto", pushMsg, userIds);
@@ -296,6 +331,38 @@ supabase
     }
   });
 
+supabase
+  .channel('comentarios-updates')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comentarios' }, async (payload) => {
+    const newComment = payload.new;
+    console.log(`[💬 NUEVO COMENTARIO] Proyecto ID: ${newComment.proyecto_id}, Por: ${newComment.autor_nombre}`);
+    
+    // Buscar encargados del proyecto
+    const { data: proyecto, error } = await supabase
+      .from('proyectos')
+      .select('titulo, encargados')
+      .eq('id', newComment.proyecto_id)
+      .single();
+      
+    if (!error && proyecto && proyecto.encargados && proyecto.encargados.length > 0) {
+      // Filtrar a los encargados que no sean el autor del comentario (si es que tenemos su id)
+      // Asumiendo que el autor_id no está disponible directamente o si, mandamos a todos por ahora
+      const userIds = proyecto.encargados.filter(e => e.user_id && e.nombre !== newComment.autor_nombre).map(e => e.user_id);
+      
+      if (userIds.length > 0) {
+        const pushMsg = `${newComment.autor_nombre} comentó en ${proyecto.titulo}: "${newComment.texto.substring(0, 50)}..."`;
+        await enviarPushNotificacion("Nuevo Comentario", pushMsg, userIds);
+      }
+    }
+  })
+  .subscribe((status) => {
+    if (status === 'SUBSCRIBED') {
+      console.log('Backend suscrito a nuevos comentarios');
+    }
+  });
+
+
+
 
 let clientSocket = null;
 
@@ -311,6 +378,47 @@ async function connectToWhatsApp() {
   clientSocket = sock;
 
   sock.ev.on('creds.update', saveCreds);
+
+  
+  sock.ev.on('messages.upsert', async (m) => {
+    try {
+      const msg = m.messages[0];
+      if (!msg.message || msg.key.fromMe) return;
+
+      const remoteJid = msg.key.remoteJid;
+      const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
+
+      if (textMessage && textMessage.trim() !== '') {
+        console.log(`[BOT] Mensaje recibido de ${remoteJid}: ${textMessage}`);
+        
+        const chatSession = model.startChat({
+          history: [] 
+        });
+
+        const result = await chatSession.sendMessage(textMessage);
+        const classification = parseClassification(result.response.text());
+
+        if (classification.tipo === 'conversacion') {
+          await sock.sendMessage(remoteJid, { text: classification.respuesta });
+        } else if (classification.tipo === 'proyecto_listo') {
+          await sock.sendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
+          
+          await supabase.from('proyectos').insert([{
+            titulo: classification.titulo,
+            nombre_cliente: classification.nombre_cliente,
+            empresa: classification.empresa,
+            cliente_telefono: classification.cliente_telefono,
+            notas: classification.notas,
+            estado: classification.estado || 'En Conversación',
+            fecha_entrega: null
+          }]);
+          console.log('[BOT] Proyecto creado en base de datos desde WhatsApp');
+        }
+      }
+    } catch (err) {
+      console.error('[BOT] Error procesando mensaje entrante:', err);
+    }
+  });
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
