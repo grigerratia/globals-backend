@@ -415,13 +415,21 @@ supabase
             console.log(`[WHATSAPP] Saltando encargado sin nombre`);
             continue;
           }
+          
           let num = null;
-          const nom = encargado.nombre.toLowerCase();
           
-          if (nom.includes("griger")) num = "584248037379";
-          else if (nom.includes("idalys")) num = "584122966969";
+          // 1. Intentar usar el teléfono dinámico (si el frontend lo envió)
+          if (encargado.telefono) {
+            num = encargado.telefono.replace(/[^0-9]/g, '');
+          } 
+          // 2. Fallback: mapeo estático para tarjetas viejas
+          else {
+            const nom = encargado.nombre.toLowerCase();
+            if (nom.includes("griger")) num = "584248037379";
+            else if (nom.includes("idalys")) num = "584122966969";
+          }
           
-          if (num) {
+          if (num && num.length >= 10) {
             try {
               await client.sendMessage(`${num}@c.us`, `⚠️ *Actualización de Proyecto*\n${pushMsg}`);
               console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
