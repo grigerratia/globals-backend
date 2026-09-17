@@ -221,8 +221,7 @@ const client = new Client({
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
-      '--single-process',
-      '--js-flags=--max-old-space-size=128'
+      '--single-process'
     ],
   },
 });
