@@ -495,15 +495,27 @@ async function connectToWhatsApp() {
       }
     }
 
+
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('[WHATSAPP] Conexión cerrada. ¿Reconectar?', shouldReconnect);
+      const statusCode = (lastDisconnect.error)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      
+      console.log('[WHATSAPP] Conexión cerrada. ¿Reconectar?', shouldReconnect, 'Status Code:', statusCode);
+      
       if (shouldReconnect) {
         setTimeout(connectToWhatsApp, 2000);
       } else {
+        console.log('[WHATSAPP] Sesión cerrada (loggedOut). Borrando credenciales y reiniciando...');
         waState = 'DISCONNECTED';
+        try {
+          fs.rmSync('./.wwebjs_auth', { recursive: true, force: true });
+        } catch(err) {
+          console.error('Error al borrar .wwebjs_auth:', err);
+        }
+        setTimeout(connectToWhatsApp, 3000);
       }
-    } else if (connection === 'open') {
+    }
+ else if (connection === 'open') {
       console.log('[WHATSAPP] Client is ready!');
       waState = 'CONNECTED';
       latestQrDataUrl = null;
