@@ -240,13 +240,14 @@ supabase
           try {
             const chatId = `${numeroLimpiado}@s.whatsapp.net`;
             if (clientSocket && waState === 'CONNECTED') {
-               await clientSocket.sendMessage(chatId, { text: mensaje });
-               console.log(`✅ Notificación enviada a ${numeroLimpiado}`);
+               clientSocket.sendMessage(chatId, { text: mensaje })
+                 .then(() => console.log(`✅ Notificación enviada a ${numeroLimpiado}`))
+                 .catch(err => console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message));
             } else {
                console.log(`[SIMULACIÓN] Mensaje que se habría enviado a ${numeroLimpiado}: ${mensaje}`);
             }
           } catch (err) {
-            console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message);
+            console.error(`❌ Error general al enviar aviso a ${numeroLimpiado}:`, err.message);
           }
         }
       }
