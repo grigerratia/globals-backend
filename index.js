@@ -210,17 +210,19 @@ app.get('/health', (_req, res) => {
 
 const client = new Client({
   authStrategy: new LocalAuth(),
-  authTimeoutMs: 120000,
+  authTimeoutMs: 0,
   puppeteer: {
     headless: true,
     executablePath: resolveChromePath(),
-    timeout: 120000,
+    timeout: 0,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
-      '--no-first-run'
+      '--no-first-run',
+      '--single-process',
+      '--js-flags=--max-old-space-size=128'
     ],
   },
 });
