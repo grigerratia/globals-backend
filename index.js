@@ -77,7 +77,7 @@ async function enviarPushNotificacion(titulo, body, userIds) {
   const { error: notifErr } = await supabase.from("notificaciones").insert(notifsToInsert);
   if(notifErr) console.error("Error insertando notificacion:", notifErr.message);
 
-  const tokens = data.map(d => d.token);
+  const tokens = [...new Set(data.map(d => d.token))];
   const message = {
     notification: {
       title: titulo,
@@ -279,7 +279,7 @@ supabase
               if (clientSocket && waState === 'CONNECTED') {
                 await clientSocket.sendMessage(`${num}@s.whatsapp.net`, { text: `⚠️ *Actualización de Proyecto*\n${pushMsg}` });
                 console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
-                await sleep(60000); 
+                await sleep(5000); 
               }
             } catch (err) {
               console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
