@@ -508,7 +508,7 @@ async function connectToWhatsApp() {
         console.log('[WHATSAPP] Sesión cerrada (loggedOut). Borrando credenciales y reiniciando...');
         waState = 'DISCONNECTED';
         try {
-          fs.rmSync('./.wwebjs_auth', { recursive: true, force: true });
+          fs.rmSync('./baileys_auth_info', { recursive: true, force: true });
         } catch(err) {
           console.error('Error al borrar .wwebjs_auth:', err);
         }
