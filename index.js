@@ -83,6 +83,19 @@ async function enviarPushNotificacion(titulo, body, userIds) {
       title: titulo,
       body: body,
     },
+    data: {
+      title: titulo,
+      body: body,
+      click_action: "/"
+    },
+    webpush: {
+      notification: {
+        icon: "/vite.svg"
+      },
+      fcmOptions: {
+        link: "/"
+      }
+    },
     tokens: tokens,
   };
 
