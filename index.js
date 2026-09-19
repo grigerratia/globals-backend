@@ -459,6 +459,13 @@ async function connectToWhatsApp() {
           await sock.sendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
           
           
+          // Buscar Líder Comercial por defecto
+          const { data: liderData } = await supabase.from('usuarios').select('id, nombre, rol').eq('rol', 'Líder Comercial').limit(1);
+          let encargados_default = [];
+          if (liderData && liderData.length > 0) {
+            encargados_default = [{ id: liderData[0].id, nombre: liderData[0].nombre, rol: 'Líder Comercial' }];
+          }
+
           const { error: insertErr } = await supabase.from('proyectos').insert([{
             titulo: classification.titulo,
             cliente_nombre: classification.nombre_cliente,
@@ -466,7 +473,8 @@ async function connectToWhatsApp() {
             cliente_telefono: classification.cliente_telefono,
             notas: classification.notas,
             estado: classification.estado || 'En Conversación',
-            fecha_entrega: null
+            fecha_entrega: null,
+            encargados: encargados_default
           }]);
           
           if (insertErr) {
