@@ -79,10 +79,9 @@ async function enviarPushNotificacion(titulo, body, userIds) {
 
   const tokens = [...new Set(data.map(d => d.token))];
   const message = {
-    data: {
+    notification: {
       title: titulo,
       body: body,
-      click_action: "/"
     },
     tokens: tokens,
   };
