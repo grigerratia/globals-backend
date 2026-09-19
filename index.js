@@ -79,22 +79,10 @@ async function enviarPushNotificacion(titulo, body, userIds) {
 
   const tokens = [...new Set(data.map(d => d.token))];
   const message = {
-    notification: {
-      title: titulo,
-      body: body,
-    },
     data: {
       title: titulo,
       body: body,
       click_action: "/"
-    },
-    webpush: {
-      notification: {
-        icon: "/vite.svg"
-      },
-      fcmOptions: {
-        link: "/"
-      }
     },
     tokens: tokens,
   };
