@@ -224,8 +224,8 @@ supabase
     if (agregados.length > 0) {
       console.log(`[👥 NUEVO ENCARGADO] En proyecto "${newRecord.titulo}"`);
       for (const enc of agregados) {
-        if (enc.user_id) {
-          await enviarPushNotificacion("Nuevo Proyecto Asignado", `Fuiste asignado al proyecto: ${newRecord.titulo}`, [enc.user_id]);
+        if (enc.user_id || enc.id) {
+          await enviarPushNotificacion("Nuevo Proyecto Asignado", `Fuiste asignado al proyecto: ${newRecord.titulo}`, [enc.user_id || enc.id]);
         }
         let num = null;
         if (enc.telefono) num = enc.telefono.replace(/[^0-9]/g, '');
@@ -282,7 +282,7 @@ supabase
 
       // Enviar notificaciones PUSH y WA a los encargados
       if (newRecord.encargados && newRecord.encargados.length > 0) {
-        const userIds = newRecord.encargados.filter(e => e.user_id).map(e => e.user_id);
+        const userIds = newRecord.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
         const pushMsg = "El proyecto " + newRecord.titulo + " fue movido a la columna: " + newRecord.estado;
         
         if (userIds.length > 0) {
@@ -668,7 +668,7 @@ cron.schedule("0 8 * * *", async () => {
   console.log(`[CRON] Se procesarán ${alertas.length} alertas...`);
   
   for (const alerta of alertas) {
-    const pushUserIds = alerta.encargados.filter(e => e.user_id).map(e => e.user_id);
+    const pushUserIds = alerta.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
     if (pushUserIds.length > 0) {
       await enviarPushNotificacion("⚠️ Alerta de Proyecto", alerta.mensaje, pushUserIds);
     }
