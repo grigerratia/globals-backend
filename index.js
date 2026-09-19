@@ -286,7 +286,10 @@ supabase
         const pushMsg = "El proyecto " + newRecord.titulo + " fue movido a la columna: " + newRecord.estado;
         
         if (userIds.length > 0) {
-          await enviarPushNotificacion("Actualización de Proyecto", pushMsg, userIds);
+          // Add a 5 second delay so the user has time to background the app
+          setTimeout(async () => {
+            await enviarPushNotificacion("Actualización de Proyecto", pushMsg, userIds);
+          }, 5000);
         }
         
         for (const encargado of newRecord.encargados) {
