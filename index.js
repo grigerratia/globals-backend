@@ -321,9 +321,14 @@ supabase
       }
     }
   })
-  .subscribe((status) => {
+  .subscribe((status, err) => {
     if (status === 'SUBSCRIBED') {
       console.log('Backend suscrito a cambios de estado en Supabase');
+    } else {
+      console.error('Realtime estado status:', status, err);
+      if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+         setTimeout(() => process.exit(1), 5000); // Fuerza a Render a reiniciar la app para recuperar el WebSocket
+      }
     }
   });
 
