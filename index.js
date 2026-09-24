@@ -601,13 +601,13 @@ cron.schedule("0 8 * * *", async () => {
       const diffDays = Math.round((fechaEntrega - hoyNorm) / (1000 * 60 * 60 * 24));
       
       if (diffDays === 1) {
-        msj = `⚠️ *RECORDATORIO*\nEl proyecto "${pry.titulo}" se debe entregar MAÑANA (${fechaEntrega.toLocaleDateString()}).\nFase actual: ${pry.estado}`;
+        msj = `⚠️ *RECORDATORIO DE ENTREGA*\nPrepara todo para mañana. El proyecto "${pry.titulo}" está agendado para entregarse el ${fechaEntrega.toLocaleDateString()}.\nFase actual: ${pry.estado}`;
         necesitaAlerta = true;
       } else if (diffDays === 0) {
-        msj = `🚨 *ENTREGA HOY*\nEl proyecto "${pry.titulo}" se debe entregar HOY.\nFase actual: ${pry.estado}`;
+        msj = `🚨 *ENTREGA FINAL HOY*\n¡El día llegó! El proyecto "${pry.titulo}" debe entregarse hoy sin falta.\nFase actual: ${pry.estado}`;
         necesitaAlerta = true;
       } else if (diffDays < 0) {
-        msj = `⚠️ *ALERTA DE RETRASO*\nEl proyecto "${pry.titulo}" debió entregarse el ${fechaEntrega.toLocaleDateString()}.\nFase actual: ${pry.estado}`;
+        msj = `💥 *PROYECTO RETRASADO*\nEl proyecto "${pry.titulo}" tiene la fecha de entrega vencida (${fechaEntrega.toLocaleDateString()}). Por favor, actualiza su estado o comunícate con el cliente.\nFase actual: ${pry.estado}`;
         necesitaAlerta = true;
       }
     }
@@ -619,10 +619,10 @@ cron.schedule("0 8 * * *", async () => {
       const diffLevantamiento = Math.round((fechaLevantamiento - hoyNorm) / (1000 * 60 * 60 * 24));
       
       if (diffLevantamiento === 1) {
-        msj += (msj ? '\n\n' : '') + `⚠️ *LEVANTAMIENTO MAÑANA*\nEl proyecto "${pry.titulo}" tiene levantamiento MAÑANA (${fechaLevantamiento.toLocaleDateString()}).`;
+        msj += (msj ? '\n\n' : '') + `⚠️ *RECORDATORIO LEVANTAMIENTO*\nMañana (${fechaLevantamiento.toLocaleDateString()}) es el levantamiento del proyecto "${pry.titulo}".`;
         necesitaAlerta = true;
       } else if (diffLevantamiento === 0) {
-        msj += (msj ? '\n\n' : '') + `🚨 *LEVANTAMIENTO HOY*\nEl proyecto "${pry.titulo}" tiene levantamiento HOY.`;
+        msj += (msj ? '\n\n' : '') + `🚨 *LEVANTAMIENTO HOY*\nHoy es el levantamiento programado para el proyecto "${pry.titulo}".`;
         necesitaAlerta = true;
       }
     }
@@ -660,9 +660,16 @@ cron.schedule("0 8 * * *", async () => {
     }
 
     if (necesitaAlerta) {
+      let tituloPush = "⚠️ Alerta de Proyecto";
+      if (msj.includes("MAÑANA") || msj.includes("mañana") || msj.includes("RECORDATORIO")) tituloPush = "⏰ Recordatorio de Proyecto";
+      else if (msj.includes("HOY") || msj.includes("hoy") || msj.includes("FINAL")) tituloPush = "🚨 Proyecto Vence HOY";
+      else if (msj.includes("RETRASADO")) tituloPush = "💥 Proyecto Retrasado";
+      else if (msj.includes("ESTANCADO") || msj.includes("estancado")) tituloPush = "⏳ Proyecto Estancado";
+
       alertas.push({
         proyecto: pry.titulo,
         mensaje: msj,
+        tituloPush: tituloPush,
         encargados: pry.encargados || []
       });
     }
@@ -678,7 +685,7 @@ cron.schedule("0 8 * * *", async () => {
   for (const alerta of alertas) {
     const pushUserIds = alerta.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
     if (pushUserIds.length > 0) {
-      await enviarPushNotificacion("⚠️ Alerta de Proyecto", alerta.mensaje, pushUserIds);
+      await enviarPushNotificacion(alerta.tituloPush || "⚠️ Alerta de Proyecto", alerta.mensaje, pushUserIds);
     }
 
     for (const encargado of alerta.encargados) {
