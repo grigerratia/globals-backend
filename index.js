@@ -474,12 +474,13 @@ async function connectToWhatsApp() {
             encargados_default = [{ id: liderData[0].id, nombre: liderData[0].nombre, rol: 'Líder Comercial' }];
           }
 
+          const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]';
           const { error: insertErr } = await supabase.from('proyectos').insert([{
             titulo: classification.titulo,
             cliente_nombre: classification.nombre_cliente,
             cliente_empresa: classification.empresa,
             cliente_telefono: classification.cliente_telefono,
-            notas: classification.notas,
+            notas: notasFinales.trim(),
             estado: classification.estado || 'En Conversación',
             fecha_entrega: null,
             encargados: encargados_default
