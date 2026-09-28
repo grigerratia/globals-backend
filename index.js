@@ -165,6 +165,18 @@ function parseClassification(raw) {
   }
 }
 
+
+// --- MANEJO GLOBAL DE ERRORES ---
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL ERROR] Uncaught Exception:', err);
+  // No salimos de proceso para no romper el backend
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRITICAL ERROR] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+// --------------------------------
+
 const PORT = 3000;
 const app = express();
 app.use(cors());
@@ -174,6 +186,11 @@ let waState = 'DISCONNECTED';
 let latestQrDataUrl = null;
 
 // Endpoint para chequear la memoria (Qué tan apretado está el backend)
+
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.get('/api/metrics', (req, res) => {
   const used = process.memoryUsage();
   const memoryInfo = {
@@ -237,7 +254,7 @@ supabase
         if (num && num.length >= 10) {
            try {
              if (clientSocket && waState === 'CONNECTED') {
-                await clientSocket.sendMessage(`${num}@s.whatsapp.net`, { text: `📌 *Nuevo Proyecto Asignado*\nHas sido asignado al proyecto: *${newRecord.titulo}*.` });
+                await safeSendMessage(`${num}@s.whatsapp.net`, { text: `📌 *Nuevo Proyecto Asignado*\nHas sido asignado al proyecto: *${newRecord.titulo}*.` });
                 console.log(`[WHATSAPP] Aviso de asignación a ${enc.nombre} (${num})`);
                 await sleep(5000);
              }
@@ -268,7 +285,7 @@ supabase
           try {
             const chatId = `${numeroLimpiado}@s.whatsapp.net`;
             if (clientSocket && waState === 'CONNECTED') {
-               // clientSocket.sendMessage(chatId, { text: mensaje })
+               // safeSendMessage(chatId, { text: mensaje })
                  // .then(() => console.log(`✅ Notificación enviada a ${numeroLimpiado}`))
                  // .catch(err => console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message));
             } else {
@@ -309,7 +326,7 @@ supabase
           if (num && num.length >= 10) {
             try {
               if (clientSocket && waState === 'CONNECTED') {
-                await clientSocket.sendMessage(`${num}@s.whatsapp.net`, { text: `⚠️ *Actualización de Proyecto*\n${pushMsg}` });
+                await safeSendMessage(`${num}@s.whatsapp.net`, { text: `⚠️ *Actualización de Proyecto*\n${pushMsg}` });
                 console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
                 await sleep(5000); 
               }
@@ -367,7 +384,44 @@ supabase
 
 let clientSocket = null;
 
+
+// --- WHATSAPP MESSAGE QUEUE ---
+const waMessageQueue = [];
+let isProcessingWaQueue = false;
+
+async function processWaQueue() {
+  if (isProcessingWaQueue) return;
+  isProcessingWaQueue = true;
+
+  while (waMessageQueue.length > 0) {
+    const { jid, message, resolve, reject } = waMessageQueue.shift();
+    try {
+      if (clientSocket) {
+        const result = await safeSendMessage(jid, message);
+        resolve(result);
+      } else {
+        reject(new Error("WhatsApp socket no conectado"));
+      }
+    } catch (e) {
+      console.error("[WA Queue] Error enviando mensaje a", jid, e.message);
+      reject(e);
+    }
+    // Delay entre 2.5 y 4.5 segundos para evitar ban de Meta
+    await new Promise(r => setTimeout(r, 2500 + Math.random() * 2000));
+  }
+  isProcessingWaQueue = false;
+}
+
+function safeSendMessage(jid, message) {
+  return new Promise((resolve, reject) => {
+    waMessageQueue.push({ jid, message, resolve, reject });
+    processWaQueue();
+  });
+}
+// ------------------------------
+
 async function connectToWhatsApp() {
+
   const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
   
   const sock = makeWASocket({
@@ -381,7 +435,28 @@ async function connectToWhatsApp() {
   sock.ev.on('creds.update', saveCreds);
 
   
+
+// --- LIMITADOR DE TASA (RATE LIMIT) GLOBAL PARA GOOGLE AI ---
+// Limitaremos a 10 peticiones por minuto para tener un margen contra el límite de 15 RPM
+const globalAiRequests = [];
+
+function checkAndAddAiRequest() {
+  const now = Date.now();
+  // Limpiar peticiones más antiguas de 1 minuto
+  while (globalAiRequests.length > 0 && now - globalAiRequests[0] > 60000) {
+    globalAiRequests.shift();
+  }
+  
+  if (globalAiRequests.length >= 12) {
+    return false; // Límite excedido
+  }
+  globalAiRequests.push(now);
+  return true;
+}
+// -------------------------------------------------------------
+
   sock.ev.on('messages.upsert', async (m) => {
+
     try {
       const msg = m.messages[0];
       if (!msg.message || msg.key.fromMe) return;
@@ -390,8 +465,16 @@ async function connectToWhatsApp() {
       if (remoteJid.includes("@g.us")) return;
       const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
 
+
       if (textMessage && textMessage.trim() !== '') {
         console.log(`[BOT] Mensaje recibido de ${remoteJid}: ${textMessage}`);
+        
+        if (!checkAndAddAiRequest()) {
+           console.log(`[BOT] Rate limit excedido para ${remoteJid}`);
+           await safeSendMessage(remoteJid, { text: "Estoy procesando demasiadas cosas a la vez en este momento, dame 1 minuto para organizar mis ideas. ⏳" });
+           return;
+        }
+
         
         
 
@@ -461,10 +544,10 @@ async function connectToWhatsApp() {
 
 
         if (classification.tipo === 'conversacion') {
-          await sock.sendMessage(remoteJid, { text: classification.respuesta });
+          await safeSendMessage(remoteJid, { text: classification.respuesta });
         } else if (classification.tipo === 'proyecto_listo') {
           activeChats.delete(remoteJid);
-          await sock.sendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
+          await safeSendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
           
           
           // Buscar Líder Comercial por defecto
@@ -722,7 +805,7 @@ cron.schedule("0 8 * * *", async () => {
 
       if (num) {
         try {
-          await clientSocket.sendMessage(`${num}@c.us`.replace('@c.us', '@s.whatsapp.net'), { text: alerta.mensaje });
+          await safeSendMessage(`${num}@c.us`.replace('@c.us', '@s.whatsapp.net'), { text: alerta.mensaje });
           console.log(`[WHATSAPP-CRON] Mensaje enviado a ${encargado.nombre} (${num})`);
           await sleep(15000);
         } catch(e) {
