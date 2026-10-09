@@ -813,7 +813,6 @@ function checkAndAddAiRequest() {
           }
 
         }
-      }
     } catch (err) {
       console.error('[BOT] Error procesando mensaje entrante:', err);
     }
