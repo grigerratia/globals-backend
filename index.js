@@ -259,6 +259,7 @@ const useSupabaseAuthState = async (supabaseClient, tableName = 'whatsapp_auth')
   };
 
   const creds = await readData('creds') || initAuthCreds();
+  const keysCache = new Map();
 
   return {
     state: {
@@ -268,7 +269,15 @@ const useSupabaseAuthState = async (supabaseClient, tableName = 'whatsapp_auth')
           const data = {};
           await Promise.all(
             ids.map(async (id) => {
-              let value = await readData(`${type}-${id}`);
+              const key = `${type}-${id}`;
+              let value;
+              if (keysCache.has(key)) {
+                value = keysCache.get(key);
+              } else {
+                value = await readData(key);
+                if (value) keysCache.set(key, value);
+              }
+              
               if (type === 'app-state-sync-key' && value) {
                 value = proto.Message.AppStateSyncKeyData.fromObject(value);
               }
@@ -284,8 +293,10 @@ const useSupabaseAuthState = async (supabaseClient, tableName = 'whatsapp_auth')
               const value = data[category][id];
               const key = `${category}-${id}`;
               if (value) {
+                keysCache.set(key, value);
                 tasks.push(writeData(value, key));
               } else {
+                keysCache.delete(key);
                 tasks.push(removeData(key));
               }
             }
