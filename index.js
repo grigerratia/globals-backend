@@ -718,7 +718,7 @@ function checkAndAddAiRequest() {
         const { data: clientProjects } = await supabase
           .from('proyectos')
           .select('titulo, estado, notas, fecha_entrega')
-          .ilike('cliente_telefono', `%${phoneNumber}%`)
+          .or(`cliente_telefono.ilike.%${phoneNumber}%,notas.ilike.%${remoteJid}%`)
           .order('fecha_ultima_actualizacion', { ascending: false })
           .limit(3);
 
@@ -875,7 +875,7 @@ function checkAndAddAiRequest() {
              }
           }
 
-          const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]';
+          const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]\n\n[WJID:' + remoteJid + ']';
           const { error: insertErr } = await supabase.from('proyectos').insert([{
             titulo: classification.titulo,
             cliente_nombre: classification.nombre_cliente,
