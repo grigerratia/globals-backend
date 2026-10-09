@@ -268,12 +268,48 @@ supabase
            }
         }
       }
+    // Buscar encargados eliminados
+    const eliminados = oldEnc.filter(o => !newEnc.some(n => (n.user_id && n.user_id === o.user_id) || (n.id && n.id === o.id) || (n.nombre === o.nombre)));
+
+    if (eliminados.length > 0) {
+      console.log(`[👥 ENCARGADO ELIMINADO] En proyecto "${newRecord.titulo}"`);
+      for (const enc of eliminados) {
+        if (enc.user_id || enc.id) {
+          await enviarPushNotificacion("Fuiste removido del proyecto", `Has sido removido del proyecto: ${newRecord.titulo}`, [enc.user_id || enc.id]);
+        }
+        let num = null;
+        if (enc.telefono) num = enc.telefono.replace(/[^0-9]/g, '');
+        else {
+           const nom = enc.nombre ? enc.nombre.toLowerCase() : '';
+           if (nom.includes("griger")) num = "584248037379";
+           else if (nom.includes("idalys")) num = "584122966969";
+        }
+        if (num) {
+           if (num.startsWith('0')) num = '58' + num.substring(1);
+           else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+        }
+        if (num && num.length >= 10) {
+           try {
+             if (clientSocket && waState === 'CONNECTED') {
+                await safeSendMessage(`${num}@s.whatsapp.net`, { text: `📌 *Removido del Proyecto*\nHas sido removido del proyecto: *${newRecord.titulo}*.` });
+             }
+           } catch(e) {}
+        }
+      }
     }
 
     const notifsToEncargados = [];
 
+    const isSilencedState = (estado) => {
+      if (!estado) return false;
+      const lower = estado.toLowerCase();
+      return lower.includes('archivado') || lower.includes('cancelado') || lower.includes('pausa') || lower.includes('detenido') || lower.includes('ocult');
+    };
+
+    const isCurrentlySilenced = isSilencedState(newRecord.estado);
+
     // Título
-    if (oldRecord.titulo !== newRecord.titulo) {
+    if (!isCurrentlySilenced && oldRecord.titulo !== newRecord.titulo) {
       notifsToEncargados.push(`✏️ El proyecto cambió su nombre de "${oldRecord.titulo}" a "${newRecord.titulo}"`);
     }
 
@@ -287,36 +323,39 @@ supabase
         console.log(`[🔄 CAMBIO DE ESTADO] Proyecto "${newRecord.titulo}" -> "${newRecord.estado}"`);
         
         const estLower = (newRecord.estado || '').toLowerCase();
-        if (estLower.includes('archivado') || estLower.includes('cancelado') || estLower.includes('pausa') || estLower.includes('detenido')) {
-          notifsToEncargados.push(`🛑 El proyecto "${newRecord.titulo}" pasó a estado: ${newRecord.estado}.\nMotivo: ${newRecord.motivo_cancelacion || 'No especificado'}`);
-        } else if (newRecord.motivo_cancelacion && oldRecord.motivo_cancelacion !== newRecord.motivo_cancelacion) {
-          notifsToEncargados.push(`⚠️ El proyecto "${newRecord.titulo}" retrocedió a la columna ${newRecord.estado}.\nMotivo: ${newRecord.motivo_cancelacion}`);
-        } else {
-          notifsToEncargados.push(`🔄 El proyecto "${newRecord.titulo}" fue movido a la columna: ${newRecord.estado}`);
-        }
+        
+        if (!estLower.includes('ocult')) {
+          if (estLower.includes('archivado') || estLower.includes('cancelado') || estLower.includes('pausa') || estLower.includes('detenido')) {
+            notifsToEncargados.push(`🛑 El proyecto "${newRecord.titulo}" pasó a estado: ${newRecord.estado}.\nMotivo: ${newRecord.motivo_cancelacion || 'No especificado'}`);
+          } else if (newRecord.motivo_cancelacion && oldRecord.motivo_cancelacion !== newRecord.motivo_cancelacion) {
+            notifsToEncargados.push(`⚠️ El proyecto "${newRecord.titulo}" retrocedió a la columna ${newRecord.estado}.\nMotivo: ${newRecord.motivo_cancelacion}`);
+          } else {
+            notifsToEncargados.push(`🔄 El proyecto "${newRecord.titulo}" fue movido a la columna: ${newRecord.estado}`);
+          }
 
-        // Notificar cliente solo si no se archiva
-        if (newRecord.estado !== 'Archivado' && newRecord.cliente_telefono) {
-          const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
-          if (numeroLimpiado.length >= 10) {
-            const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha sido movido a la fase: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
-            try {
-              if (clientSocket && waState === 'CONNECTED') {
-                 // safeSendMessage(chatId, { text: mensaje })
-              }
-            } catch (err) {}
+          // Notificar cliente solo si no se archiva
+          if (newRecord.estado !== 'Archivado' && newRecord.cliente_telefono) {
+            const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
+            if (numeroLimpiado.length >= 10) {
+              const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha sido movido a la fase: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
+              try {
+                if (clientSocket && waState === 'CONNECTED') {
+                   // safeSendMessage(chatId, { text: mensaje })
+                }
+              } catch (err) {}
+            }
           }
         }
       }
     }
 
     // Levantamiento
-    if (!oldRecord.levantamiento_fecha && newRecord.levantamiento_fecha) {
+    if (!isCurrentlySilenced && !oldRecord.levantamiento_fecha && newRecord.levantamiento_fecha) {
        notifsToEncargados.push(`📋 Se llenó la hoja de levantamiento para el proyecto "${newRecord.titulo}"`);
     }
 
     // Notas
-    if (oldRecord.notas !== newRecord.notas) {
+    if (!isCurrentlySilenced && oldRecord.notas !== newRecord.notas) {
        notifsToEncargados.push(`📝 Se agregaron/modificaron las notas en el proyecto "${newRecord.titulo}"`);
     }
 
@@ -385,48 +424,41 @@ supabase
       .single();
       
     if (!error && proyecto && proyecto.encargados && proyecto.encargados.length > 0) {
-      const isDinamo = newComment.autor_nombre.toLowerCase().includes('dínamo') || newComment.autor_nombre.toLowerCase().includes('dinamo');
-      const isMention = newComment.texto.includes('@');
-      
-      const userIds = proyecto.encargados.filter(e => e.user_id && e.nombre !== newComment.autor_nombre).map(e => e.user_id);
+      const userIds = proyecto.encargados.filter(e => (e.user_id || e.id) && e.nombre !== newComment.autor_nombre).map(e => (e.user_id || e.id));
       const pushMsg = `${newComment.autor_nombre} comentó en ${proyecto.titulo}: "${newComment.texto.substring(0, 50)}..."`;
       
       if (userIds.length > 0) {
         await enviarPushNotificacion("Nuevo Comentario", pushMsg, userIds);
       }
 
-      if (isDinamo || isMention) {
-        let waText = `💬 *Nuevo comentario en "${proyecto.titulo}"*\n👤 *Por:* ${newComment.autor_nombre}\n\n"${newComment.texto}"\n\n💡 _Recuerda responder o revisar esto directamente desde la app de Global's._`;
-        
-        for (const encargado of proyecto.encargados) {
-           if (!encargado.nombre || encargado.nombre === newComment.autor_nombre) continue;
-           
-           // Si es una mención, idealmente notificar solo al mencionado, pero como no sabemos el mapping exacto del nombre en el texto, 
-           // notificaremos a todos los encargados cuando alguien mencione o Dinamo hable.
-           let num = null;
-           if (encargado.telefono) {
-             num = encargado.telefono.replace(/[^0-9]/g, '');
-           } else {
-             const nom = encargado.nombre.toLowerCase();
-             if (nom.includes("griger")) num = "584248037379";
-             else if (nom.includes("idalys")) num = "584122966969";
-           }
+      let waText = `💬 *Nuevo comentario en "${proyecto.titulo}"*\n👤 *Por:* ${newComment.autor_nombre}\n\n"${newComment.texto}"\n\n💡 _Recuerda responder o revisar esto directamente desde la app._`;
+      
+      for (const encargado of proyecto.encargados) {
+         if (!encargado.nombre || encargado.nombre === newComment.autor_nombre) continue;
+         
+         let num = null;
+         if (encargado.telefono) {
+           num = encargado.telefono.replace(/[^0-9]/g, '');
+         } else {
+           const nom = encargado.nombre.toLowerCase();
+           if (nom.includes("griger")) num = "584248037379";
+           else if (nom.includes("idalys")) num = "584122966969";
+         }
 
-           if (num) {
-              if (num.startsWith('0')) num = '58' + num.substring(1);
-              else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
-           }
+         if (num) {
+            if (num.startsWith('0')) num = '58' + num.substring(1);
+            else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+         }
 
-           if (num && num.length >= 10) {
-             try {
-               if (clientSocket && waState === 'CONNECTED') {
-                 await safeSendMessage(`${num}@s.whatsapp.net`, { text: waText });
-               }
-             } catch (err) {
-               console.error(`Error WA Comentario a ${encargado.nombre}:`, err.message);
+         if (num && num.length >= 10) {
+           try {
+             if (clientSocket && waState === 'CONNECTED') {
+               await safeSendMessage(`${num}@s.whatsapp.net`, { text: waText });
              }
+           } catch (err) {
+             console.error(`Error WA Comentario a ${encargado.nombre}:`, err.message);
            }
-        }
+         }
       }
     }
   })
