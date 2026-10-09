@@ -730,44 +730,102 @@ function checkAndAddAiRequest() {
           dynamicPrompt += `\n\n¡IMPORTANTE! Este cliente YA TIENE los siguientes proyectos registrados en el sistema:\n${projectList}\n\nSi el cliente está preguntando por el estatus de su pedido, infórmale cordialmente basándote en esta información y NO generes un nuevo proyecto (usa tipo: conversacion). Si el cliente está pidiendo algo COMPLETAMENTE NUEVO, entonces sí pide los datos faltantes para crear un nuevo proyecto.`;
         }
 
+        const googleKeys = [
+          process.env.GEMINI_API_KEY,
+          process.env.GEMINI_API_KEY_2,
+          process.env.GEMINI_API_KEY_3
+        ].filter(Boolean);
+        
+        let currentGoogleKeyIndex = 0;
+
         const modelosATestar = [
-          'gemini-3.8-flash',
-          'gemini-3.5-flash-lite',
-          'gemini-3.1-flash-lite',
-          'gemini-flash-latest',
-          'gemini-flash-lite-latest'
+          { id: 'gemini-3.5-flash-lite', provider: 'google' },
+          { id: 'gemini-3.1-flash-lite', provider: 'google' },
+          { id: 'gemini-3.8-flash', provider: 'google' },
+          { id: 'gemini-3.5-flash', provider: 'google' },
+          { id: 'llama-3.1-8b-instant', provider: 'groq' },
+          { id: 'llama-3.1-70b-versatile', provider: 'groq' }
         ];
         
         let classification = null;
         let success = false;
         
-        for (const modelName of modelosATestar) {
+        let keysTried = 1;
+        for (let i = 0; i < modelosATestar.length; i++) {
+          const currentModel = modelosATestar[i];
           try {
-            console.log(`[BOT] Intentando responder con el modelo: ${modelName}`);
-            const model = genAI.getGenerativeModel({
-              model: modelName,
-              systemInstruction: dynamicPrompt,
-              generationConfig: {
-                responseMimeType: 'application/json',
-              },
-            });
-
-            
-            
+            console.log(`[BOT] Intentando responder con el modelo: ${currentModel.id} (${currentModel.provider})`);
+            let resultText = "";
             let userHistory = activeChats.get(remoteJid) || [];
             
-            const chatSession = model.startChat({ history: userHistory });
-            const result = await chatSession.sendMessage(textMessage);
-            
-            userHistory = await chatSession.getHistory();
-            activeChats.set(remoteJid, userHistory);
-            
-            classification = parseClassification(result.response.text());
+            if (currentModel.provider === 'google') {
+              const genAITemp = new GoogleGenerativeAI(googleKeys[currentGoogleKeyIndex]);
+              const model = genAITemp.getGenerativeModel({
+                model: currentModel.id,
+                systemInstruction: dynamicPrompt,
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                },
+              });
+              
+              const chatSession = model.startChat({ history: userHistory });
+              const result = await chatSession.sendMessage(textMessage);
+              
+              userHistory = await chatSession.getHistory();
+              activeChats.set(remoteJid, userHistory);
+              resultText = result.response.text();
+              
+            } else if (currentModel.provider === 'groq') {
+              let localHistory = userHistory.map(msg => ({
+                role: msg.role === 'model' ? 'assistant' : 'user',
+                content: msg.parts[0].text
+              }));
+              localHistory.unshift({ role: 'system', content: dynamicPrompt + "\\n\\nDEBES RESPONDER UNICAMENTE CON UN JSON VÁLIDO. SIN MARKDOWN." });
+              localHistory.push({ role: 'user', content: textMessage });
+              
+              const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  model: currentModel.id,
+                  messages: localHistory,
+                  response_format: { type: "json_object" }
+                })
+              });
+              
+              if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error?.message || response.statusText);
+              }
+              const result = await response.json();
+              resultText = result.choices[0].message.content;
+              
+              userHistory.push({ role: 'user', parts: [{ text: textMessage }] });
+              userHistory.push({ role: 'model', parts: [{ text: resultText }] });
+              activeChats.set(remoteJid, userHistory);
+            }
 
+            classification = parseClassification(resultText);
             success = true;
             break; // Salimos del for loop si tuvo éxito
           } catch (modelErr) {
-            console.error(`[BOT] Falló el modelo ${modelName}: ${modelErr.message}`);
+            console.warn(`[BOT] Falló el modelo ${currentModel.id}: ${modelErr.message}`);
+            
+            const isQuotaError = modelErr.message.includes('429') || modelErr.message.includes('503') || modelErr.message.includes('insufficient_quota') || modelErr.message.includes('Resource has been exhausted');
+
+            if (currentModel.provider === 'google' && isQuotaError) {
+              if (keysTried < googleKeys.length) {
+                console.warn(`[BOT] Rotando a la siguiente API Key de Google... (${keysTried}/${googleKeys.length})`);
+                currentGoogleKeyIndex = (currentGoogleKeyIndex + 1) % googleKeys.length;
+                keysTried++;
+                i--; // Reintentar el mismo modelo
+                continue;
+              }
+            }
+            keysTried = 1;
           }
         }
         
