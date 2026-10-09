@@ -268,6 +268,7 @@ supabase
            }
         }
       }
+    }
     // Buscar encargados eliminados
     const eliminados = oldEnc.filter(o => !newEnc.some(n => (n.user_id && n.user_id === o.user_id) || (n.id && n.id === o.id) || (n.nombre === o.nombre)));
 
