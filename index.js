@@ -256,7 +256,7 @@ supabase
              if (clientSocket && waState === 'CONNECTED') {
                 await safeSendMessage(`${num}@s.whatsapp.net`, { text: `📌 *Nuevo Proyecto Asignado*\nHas sido asignado al proyecto: *${newRecord.titulo}*.` });
                 console.log(`[WHATSAPP] Aviso de asignación a ${enc.nombre} (${num})`);
-                await sleep(5000);
+                
              }
            } catch(e) {
              console.error(`Error avisando asignación a ${enc.nombre}:`, e.message);
@@ -328,7 +328,7 @@ supabase
               if (clientSocket && waState === 'CONNECTED') {
                 await safeSendMessage(`${num}@s.whatsapp.net`, { text: `⚠️ *Actualización de Proyecto*\n${pushMsg}` });
                 console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
-                await sleep(5000); 
+                 
               }
             } catch (err) {
               console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
@@ -397,7 +397,7 @@ async function processWaQueue() {
     const { jid, message, resolve, reject } = waMessageQueue.shift();
     try {
       if (clientSocket) {
-        const result = await safeSendMessage(jid, message);
+        const result = await clientSocket.sendMessage(jid, message);
         resolve(result);
       } else {
         reject(new Error("WhatsApp socket no conectado"));
@@ -406,8 +406,8 @@ async function processWaQueue() {
       console.error("[WA Queue] Error enviando mensaje a", jid, e.message);
       reject(e);
     }
-    // Delay entre 2.5 y 4.5 segundos para evitar ban de Meta
-    await new Promise(r => setTimeout(r, 2500 + Math.random() * 2000));
+    // Delay entre 5 y 10 segundos para evitar ban de Meta
+    await new Promise(r => setTimeout(r, 5000 + Math.random() * 5000));
   }
   isProcessingWaQueue = false;
 }
@@ -658,7 +658,7 @@ function sleep(ms) {
 
 
 cron.schedule("0 8 * * *", async () => {
-  console.log("[CRON] Verificando proyectos atrasados...");
+  console.log("[CRON] Ejecutando resumen diario de proyectos...");
   
   const { data: proyectos, error } = await supabase
     .from("proyectos")
@@ -670,150 +670,96 @@ cron.schedule("0 8 * * *", async () => {
     return;
   }
 
+  const rolesMap = {
+    'Diseñador': ['en diseño'],
+    'Instalador': ['instalar', 'instalación'],
+    'Impresor u Operador': ['impresión', 'producción'],
+    'Fabricante': ['fabricación'],
+    'Líder Comercial': ['conversación', 'levantamiento', 'presupuesto', 'cobranza', 'cotización']
+  };
+
   const hoyNorm = new Date();
   hoyNorm.setHours(0,0,0,0);
-  const alertas = [];
 
+  // Extraer usuarios únicos de todos los encargados
+  const userMap = new Map();
   for (const pry of proyectos) {
-    let necesitaAlerta = false;
-    let msj = "";
-
-    if (pry.fecha_entrega) {
-      const fechaEntrega = new Date(pry.fecha_entrega);
-      fechaEntrega.setHours(0,0,0,0);
-      
-      const diffDays = Math.round((fechaEntrega - hoyNorm) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays === 1) {
-        msj = `⚠️ *RECORDATORIO DE ENTREGA*\nPrepara todo para mañana. El proyecto "${pry.titulo}" está agendado para entregarse el ${fechaEntrega.toLocaleDateString()}.\nFase actual: ${pry.estado}`;
-        necesitaAlerta = true;
-      } else if (diffDays === 0) {
-        msj = `🚨 *ENTREGA FINAL HOY*\n¡El día llegó! El proyecto "${pry.titulo}" debe entregarse hoy sin falta.\nFase actual: ${pry.estado}`;
-        necesitaAlerta = true;
-      } else if (diffDays < 0) {
-        msj = `💥 *PROYECTO RETRASADO*\nEl proyecto "${pry.titulo}" tiene la fecha de entrega vencida (${fechaEntrega.toLocaleDateString()}). Por favor, actualiza su estado o comunícate con el cliente.\nFase actual: ${pry.estado}`;
-        necesitaAlerta = true;
+    if (!pry.encargados) continue;
+    for (const e of pry.encargados) {
+      if (e.nombre && (e.id || e.user_id)) {
+         userMap.set(e.id || e.user_id, { id: e.id || e.user_id, nombre: e.nombre, rol: e.rol || 'Desconocido', telefono: e.telefono });
       }
-    }
-    
-    
-    if (pry.levantamiento_fecha) {
-      const fechaLevantamiento = new Date(pry.levantamiento_fecha);
-      fechaLevantamiento.setHours(0,0,0,0);
-      const diffLevantamiento = Math.round((fechaLevantamiento - hoyNorm) / (1000 * 60 * 60 * 24));
-      
-      if (diffLevantamiento === 1) {
-        msj += (msj ? '\n\n' : '') + `⚠️ *RECORDATORIO LEVANTAMIENTO*\nMañana (${fechaLevantamiento.toLocaleDateString()}) es el levantamiento del proyecto "${pry.titulo}".`;
-        necesitaAlerta = true;
-      } else if (diffLevantamiento === 0) {
-        msj += (msj ? '\n\n' : '') + `🚨 *LEVANTAMIENTO HOY*\nHoy es el levantamiento programado para el proyecto "${pry.titulo}".`;
-        necesitaAlerta = true;
-      }
-    }
-    
-    if (pry.notas) {
-      const match = pry.notas.match(/\[DÍAS ESTIMADOS FASE ACTUAL: (\d+)\]/);
-      if (match) {
-        const diasTotales = parseInt(match[1], 10);
-        const fechaUltima = new Date(pry.fecha_ultima_actualizacion || pry.fecha_creacion);
-        fechaUltima.setHours(0,0,0,0);
-        const deadlineFase = new Date(fechaUltima);
-        deadlineFase.setDate(deadlineFase.getDate() + diasTotales);
-        
-        const diffFase = Math.round((deadlineFase - hoyNorm) / (1000 * 60 * 60 * 24));
-        if (diffFase === 1) {
-           msj += (msj ? '\n\n' : '') + `⚠️ *ALERTA DE FASE*\nMañana se vence el tiempo estimado para la fase "${pry.estado}" del proyecto "${pry.titulo}".`;
-           necesitaAlerta = true;
-        } else if (diffFase === 0) {
-           msj += (msj ? '\n\n' : '') + `🚨 *FASE VENCIDA HOY*\nHoy vence el tiempo estimado para la fase "${pry.estado}" del proyecto "${pry.titulo}".`;
-           necesitaAlerta = true;
-        } else if (diffFase < 0) {
-           msj += (msj ? '\n\n' : '') + `💥 *FASE RETRASADA*\nEl proyecto "${pry.titulo}" ha superado el tiempo estimado para la fase "${pry.estado}".`;
-           necesitaAlerta = true;
-        }
-      }
-    }
-
-    if (!necesitaAlerta && pry.fecha_ultima_actualizacion) {
-      const fechaUltima = new Date(pry.fecha_ultima_actualizacion);
-      fechaUltima.setHours(0,0,0,0);
-      const diasEstancado = Math.floor((hoyNorm - fechaUltima) / (1000 * 60 * 60 * 24));
-      
-      if (diasEstancado >= 2) {
-        necesitaAlerta = true;
-        try {
-          const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-          const prompt = `Actúas como un asistente de gestión de proyectos muy natural y humano. 
-          Tienes que redactar un mensaje corto (máximo 30-40 palabras) de notificación push para avisarle al equipo que un proyecto está estancado.
-          
-          Datos del proyecto:
-          - Título: "${pry.titulo}"
-          - Días estancado: ${diasEstancado}
-          - Fase actual: "${pry.estado}"
-          
-          INSTRUCCIONES:
-          - No seas robótico. Usa un tono alerta pero colaborativo y directo.
-          - Inicia con un emoji (ej. ⏳ o 🚨).
-          - Menciona claramente lo que deben hacer para avanzar, dependiendo de la fase actual. Por ejemplo, si está en 'Levantamiento', diles que deben cotizar y enviar presupuesto. Si está en 'En Diseño', diles que revisen y aprueben el arte.
-          - NO uses formato markdown complejo, solo texto plano y amigable.`;
-          
-          const aiResponse = await model.generateContent(prompt);
-          msj = "Alerta\nProyecto estancado\n" + aiResponse.response.text().trim();
-        } catch (e) {
-          console.error('Error usando Gemini para CRON:', e);
-          msj = `⏳ *PROYECTO ESTANCADO*\nEl proyecto "${pry.titulo}" lleva ${diasEstancado} días sin avanzar.\nFase actual: ${pry.estado}`;
-        }
-      }
-    }
-
-    if (necesitaAlerta) {
-      let tituloPush = "⚠️ Alerta de Proyecto";
-      if (msj.includes("MAÑANA") || msj.includes("mañana") || msj.includes("RECORDATORIO")) tituloPush = "⏰ Recordatorio de Proyecto";
-      else if (msj.includes("HOY") || msj.includes("hoy") || msj.includes("FINAL")) tituloPush = "🚨 Proyecto Vence HOY";
-      else if (msj.includes("RETRASADO")) tituloPush = "💥 Proyecto Retrasado";
-      else if (msj.includes("ESTANCADO") || msj.includes("estancado")) tituloPush = "⏳ Proyecto Estancado";
-
-      alertas.push({
-        proyecto: pry.titulo,
-        mensaje: msj,
-        tituloPush: tituloPush,
-        encargados: pry.encargados || []
-      });
     }
   }
 
-  if (alertas.length === 0) {
-    console.log("[CRON] Ningún proyecto requiere alerta el día de hoy.");
-    return;
-  }
+  for (const usuario of userMap.values()) {
+    let activosUser = [];
+    let retrasadosUser = [];
+    let intervencionUser = [];
 
-  console.log(`[CRON] Se procesarán ${alertas.length} alertas...`);
-  
-  for (const alerta of alertas) {
-    const pushUserIds = alerta.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
-    if (pushUserIds.length > 0) {
-      await enviarPushNotificacion(alerta.tituloPush || "⚠️ Alerta de Proyecto", alerta.mensaje, pushUserIds);
+    for (const pry of proyectos) {
+      if (!pry.encargados) continue;
+
+      const esEncargado = pry.encargados.some(e => e.user_id === usuario.id || e.id === usuario.id);
+      if (!esEncargado) continue;
+
+      const est = (pry.estado || '').toLowerCase();
+      let requiereIntervencion = false;
+      const keywords = rolesMap[usuario.rol] || [];
+      if (keywords.some(kw => est.includes(kw))) {
+        requiereIntervencion = true;
+      }
+
+      let retrasado = false;
+      if (pry.fecha_entrega) {
+        const d = new Date(pry.fecha_entrega);
+        d.setHours(0, 0, 0, 0);
+        if (d < hoyNorm) retrasado = true;
+      }
+
+      if (retrasado) {
+        retrasadosUser.push(pry.titulo);
+      } else if (requiereIntervencion) {
+        intervencionUser.push(pry.titulo);
+      } else {
+        activosUser.push(pry.titulo);
+      }
     }
 
-    for (const encargado of alerta.encargados) {
-      if (!encargado.nombre) continue;
-      
+    if (activosUser.length > 0 || retrasadosUser.length > 0 || intervencionUser.length > 0) {
+      let resumen = `¡Buenos días, ${usuario.nombre}! ☀️\nAquí tienes el resumen de tus proyectos:\n\n`;
+      if (retrasadosUser.length > 0) resumen += `❌ *RETRASADOS*:\n- ${retrasadosUser.join('\n- ')}\n\n`;
+      if (intervencionUser.length > 0) resumen += `⚡ *REQUIEREN TU ATENCIÓN HOY*:\n- ${intervencionUser.join('\n- ')}\n\n`;
+      if (activosUser.length > 0) resumen += `✅ *OTROS PROYECTOS ACTIVOS*:\n- ${activosUser.join('\n- ')}\n\n`;
+      resumen += `¡Que tengas un excelente día de trabajo!`;
+
+      // Enviar Push
+      await enviarPushNotificacion("Tu Resumen Diario 📋", resumen, [usuario.id]);
+
+      // Enviar WhatsApp
       let num = null;
-      const nom = encargado.nombre.toLowerCase();
-      if (nom.includes("griger")) num = "584248037379";
-      else if (nom.includes("idalys")) num = "584122966969";
+      if (usuario.telefono) {
+        num = usuario.telefono.replace(/[^0-9]/g, '');
+      } else {
+        const nom = usuario.nombre.toLowerCase();
+        if (nom.includes("griger")) num = "584248037379";
+        else if (nom.includes("idalys")) num = "584122966969";
+      }
 
-      if (num) {
+      if (num && num.length >= 10) {
         try {
-          await safeSendMessage(`${num}@c.us`.replace('@c.us', '@s.whatsapp.net'), { text: alerta.mensaje });
-          console.log(`[WHATSAPP-CRON] Mensaje enviado a ${encargado.nombre} (${num})`);
-          await sleep(15000);
+          if (clientSocket && waState === 'CONNECTED') {
+             await safeSendMessage(`${num}@s.whatsapp.net`, { text: resumen });
+             console.log(`[WHATSAPP-CRON] Resumen enviado a ${usuario.nombre} (${num})`);
+          }
         } catch(e) {
-          console.error(`Error WA Cron (${encargado.nombre}):`, e.message);
+          console.error(`Error WA Cron (${usuario.nombre}):`, e.message);
         }
       }
     }
   }
+}, {
+  timezone: "America/Caracas"
 });
 
 
