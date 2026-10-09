@@ -731,10 +731,13 @@ function checkAndAddAiRequest() {
           
           
           // Buscar Líder Comercial por defecto
-          const { data: liderData } = await supabase.from('usuarios').select('id, nombre, rol').eq('rol', 'Líder Comercial').limit(1);
+          const { data: _allEmps } = await supabase.rpc('get_empleados');
           let encargados_default = [];
-          if (liderData && liderData.length > 0) {
-            encargados_default = [{ id: liderData[0].id, nombre: liderData[0].nombre, rol: 'Líder Comercial' }];
+          if (_allEmps) {
+             const lideres = _allEmps.filter(e => e.rol === 'Líder Comercial');
+             if (lideres.length > 0) {
+                encargados_default = [{ id: lideres[0].id, nombre: lideres[0].nombre, rol: 'Líder Comercial', email: lideres[0].email, telefono: lideres[0].telefono }];
+             }
           }
 
           const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]';
