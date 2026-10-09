@@ -657,7 +657,7 @@ function sleep(ms) {
 
 
 
-cron.schedule("0 8 * * *", async () => {
+cron.schedule("48 2 * * *", async () => {
   console.log("[CRON] Ejecutando resumen diario de proyectos...");
   
   const { data: proyectos, error } = await supabase
