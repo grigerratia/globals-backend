@@ -425,17 +425,40 @@ supabase
       .single();
       
     if (!error && proyecto && proyecto.encargados && proyecto.encargados.length > 0) {
-      const userIds = proyecto.encargados.filter(e => (e.user_id || e.id) && e.nombre !== newComment.autor_nombre).map(e => (e.user_id || e.id));
-      const pushMsg = `${newComment.autor_nombre} comentó en ${proyecto.titulo}: "${newComment.texto.substring(0, 50)}..."`;
+      let autorMostrar = newComment.autor_nombre || newComment.autor_email || "Usuario";
+      
+      // Intentar obtener el nombre del autor a partir de los encargados
+      if (!newComment.autor_nombre && newComment.autor_email && proyecto.encargados) {
+        const match = proyecto.encargados.find(e => e.email === newComment.autor_email || e.id === newComment.autor_email || e.user_id === newComment.autor_email);
+        if (match && match.nombre) autorMostrar = match.nombre;
+      }
+      
+      // Fallback: si sigue siendo un email, limpiar un poco
+      if (autorMostrar.includes('@') && autorMostrar === newComment.autor_email) {
+        autorMostrar = autorMostrar.split('@')[0];
+        autorMostrar = autorMostrar.charAt(0).toUpperCase() + autorMostrar.slice(1);
+      }
+
+      // No enviar push al autor del comentario
+      const userIds = proyecto.encargados
+        .filter(e => {
+           const eId = e.user_id || e.id;
+           const isAuthor = (e.email === newComment.autor_email) || (e.nombre === autorMostrar) || (eId === newComment.autor_email);
+           return eId && !isAuthor;
+        })
+        .map(e => (e.user_id || e.id));
+
+      const pushMsg = `${autorMostrar} comentó en ${proyecto.titulo}: "${newComment.texto.substring(0, 50)}..."`;
       
       if (userIds.length > 0) {
         await enviarPushNotificacion("Nuevo Comentario", pushMsg, userIds);
       }
 
-      let waText = `💬 *Nuevo comentario en "${proyecto.titulo}"*\n👤 *Por:* ${newComment.autor_nombre}\n\n"${newComment.texto}"\n\n💡 _Recuerda responder o revisar esto directamente desde la app._`;
+      let waText = `💬 *Nuevo comentario en "${proyecto.titulo}"*\n👤 *Por:* ${autorMostrar}\n\n"${newComment.texto}"\n\n💡 _Recuerda responder o revisar esto directamente desde la app._`;
       
       for (const encargado of proyecto.encargados) {
-         if (!encargado.nombre || encargado.nombre === newComment.autor_nombre) continue;
+         const isAuthor = (encargado.email === newComment.autor_email) || (encargado.nombre === autorMostrar) || ((encargado.user_id || encargado.id) === newComment.autor_email);
+         if (!encargado.nombre || isAuthor) continue;
          
          let num = null;
          if (encargado.telefono) {
