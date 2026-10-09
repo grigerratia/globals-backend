@@ -110,8 +110,13 @@ async function enviarPushNotificacion(titulo, body, userIds) {
 }
 
 
-const SYSTEM_PROMPT = `Eres el asistente virtual de Global's, una agencia de publicidad y marketing en Venezuela. Tu tono debe ser cálido y amable, pero siempre manteniendo la profesionalidad y formalidad. Saluda y despídete con cordialidad, usando un lenguaje respetuoso. Evita usar demasiados emojis o exceso de coloquialismos. Tu objetivo es recabar información del cliente para generar requerimientos claros y devolver un JSON estructurado.
-Para registrar el pedido, NECESITAS recolectar OBLIGATORIAMENTE esta información:
+const SYSTEM_PROMPT = `Eres el asistente virtual de Global's, una empresa que vende, crea y arma productos de publicidad exterior e interior.
+Global's ofrece: vallas publicitarias, corpóreos normales e iluminados, stands, señales de tránsito e industriales, letreros, diseño de logos, identidad visual, rotulación de vehículos o cualquier cosa, impresiones en excelentes formatos (gran formato) e impresiones 3D para acabados en vallas. También hacen tótems y tienen en la ciudad diferentes espacios para vallas.
+Horario de trabajo: de lunes a viernes en oficina de 8.30am a 5.30pm.
+
+Tu tono debe ser cálido, amable, pero no demasiado amigable; Profesional y conciso, sin muchas deambulaciones. Es mejor responder mensajes cortos pero que contengan respuestas satisfactorias. Saluda y despídete con cordialidad, usando un lenguaje respetuoso. Evita usar demasiados emojis. Tu objetivo es recabar información del cliente para generar requerimientos claros, responder dudas de los clientes en base a la información de la empresa, o escalar a un humano cuando sea necesario, y devolver un JSON estructurado.
+
+Para registrar un NUEVO pedido, NECESITAS recolectar OBLIGATORIAMENTE esta información:
 1. Qué servicio/producto necesita y sus detalles básicos (medidas, material).
 2. El Cliente (Nombre de la empresa o negocio, Ej: Hato Grill, Ferretería El Sol).
 3. La Persona de Contacto (Nombre de la persona con la que hablas, Ej: Juan Pérez).
@@ -120,19 +125,25 @@ Para registrar el pedido, NECESITAS recolectar OBLIGATORIAMENTE esta informació
 REGLAS ESTRICTAS DE RESPUESTA:
 Debes responder SIEMPRE y ÚNICAMENTE con un objeto JSON válido (sin formato markdown ni texto extra).
 
-Caso 1: Si falta información (detalles, empresa, persona de contacto, o teléfono), mantén la conversación viva para solicitar lo que falta:
+Caso 1: Si falta información (detalles, empresa, persona de contacto, o teléfono) para registrar un nuevo pedido, o estás respondiendo una duda, mantén la conversación viva:
 {
   "tipo": "conversacion",
   "respuesta": "¡Hola! Con gusto le ayudamos con su requerimiento. ¿Me podría indicar a nombre de qué empresa o negocio lo registramos y el nombre de la persona de contacto?"
 }
 
-Caso 2: Si el usuario solo está agradeciendo, diciendo 'ok', 'vale', o despidiéndose (después de que ya registraste su pedido o durante la charla), o si YA creaste el proyecto en mensajes anteriores, NO pidas más datos ni envíes proyecto_listo de nuevo, solo despídete amablemente:
+Caso 2: Si el usuario hace una pregunta extensa, compleja, o dice que quiere hablar con un humano o asesor, o no sabes qué responder de forma concisa:
+{
+  "tipo": "escalar",
+  "respuesta": "Entendido. Un asesor o líder comercial revisará tu caso y te responderá en breve. Por favor, mantente a la espera."
+}
+
+Caso 3: Si el usuario solo está agradeciendo, diciendo 'ok', 'vale', o despidiéndose (después de que ya registraste su pedido o durante la charla), o si YA creaste el proyecto en mensajes anteriores, NO pidas más datos ni envíes proyecto_listo de nuevo, solo despídete amablemente:
 {
   "tipo": "conversacion",
   "respuesta": "Entendido. La información ha sido registrada. Un miembro de nuestro equipo comercial se comunicará a la brevedad posible."
 }
 
-Caso 3: Si ya tienes los detalles del pedido, la persona de contacto, el TELÉFONO y el cliente/empresa (o si dijo que no tiene empresa) y es el momento de crear el proyecto en el sistema:
+Caso 4: Si ya tienes los detalles del pedido, la persona de contacto, el TELÉFONO y el cliente/empresa (o si dijo que no tiene empresa) y es el momento de crear el proyecto en el sistema:
 {
   "tipo": "proyecto_listo",
   "titulo": "Resumen corto (Ej: Letrero Luminoso 2x1)",
@@ -218,6 +229,7 @@ app.get('/health', (_req, res) => {
 
 const recentUpdates = new Set();
 const activeChats = new Map();
+const humanPausedChats = new Map();
 
 const useSupabaseAuthState = async (supabaseClient, tableName = 'whatsapp_auth') => {
   const writeData = async (data, id) => {
@@ -639,26 +651,46 @@ function checkAndAddAiRequest() {
 
     try {
       const msg = m.messages[0];
-      if (!msg.message || msg.key.fromMe) return;
+      if (!msg.message) return;
 
       const remoteJid = msg.key.remoteJid;
-      if (remoteJid.includes("@g.us")) return;
+      if (!remoteJid || remoteJid.includes("@g.us") || remoteJid === 'status@broadcast') return;
       const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
 
+      if (!textMessage || textMessage.trim() === '') return;
 
-      if (textMessage && textMessage.trim() !== '') {
-        console.log(`[BOT] Mensaje recibido de ${remoteJid}: ${textMessage}`);
+      if (msg.key.fromMe) {
+        // Humano respondió
+        let userHistory = activeChats.get(remoteJid) || [];
+        userHistory.push({ role: "model", parts: [{ text: textMessage }] });
+        activeChats.set(remoteJid, userHistory);
         
-        if (!checkAndAddAiRequest()) {
-           console.log(`[BOT] Rate limit excedido para ${remoteJid}`);
-           await safeSendMessage(remoteJid, { text: "Estoy procesando demasiadas cosas a la vez en este momento, dame 1 minuto para organizar mis ideas. ⏳" });
-           return;
-        }
+        humanPausedChats.set(remoteJid, Date.now() + 2 * 60 * 60 * 1000);
+        console.log(`[BOT] Humano respondió a ${remoteJid}. Bot pausado por 2 horas.`);
+        return;
+      }
 
-        
-        
+      // Check si el bot está pausado
+      const pauseUntil = humanPausedChats.get(remoteJid);
+      if (pauseUntil && Date.now() < pauseUntil) {
+         console.log(`[BOT] Bot en pausa para ${remoteJid}, ignorando mensaje del cliente...`);
+         let userHistory = activeChats.get(remoteJid) || [];
+         userHistory.push({ role: "user", parts: [{ text: textMessage }] });
+         activeChats.set(remoteJid, userHistory);
+         return;
+      } else if (pauseUntil) {
+         humanPausedChats.delete(remoteJid);
+      }
 
-        const phoneNumber = remoteJid.split('@')[0];
+      console.log(`[BOT] Mensaje recibido de ${remoteJid}: ${textMessage}`);
+      
+      if (!checkAndAddAiRequest()) {
+         console.log(`[BOT] Rate limit excedido para ${remoteJid}`);
+         await safeSendMessage(remoteJid, { text: "Estoy procesando demasiadas cosas a la vez en este momento, dame 1 minuto para organizar mis ideas. ⏳" });
+         return;
+      }
+
+      const phoneNumber = remoteJid.split('@')[0];
         
         // Buscar si el cliente ya tiene proyectos
         const { data: clientProjects } = await supabase
@@ -725,6 +757,28 @@ function checkAndAddAiRequest() {
 
         if (classification.tipo === 'conversacion') {
           await safeSendMessage(remoteJid, { text: classification.respuesta });
+        } else if (classification.tipo === 'escalar') {
+          await safeSendMessage(remoteJid, { text: classification.respuesta });
+          // Pausar bot hasta que un humano responda
+          humanPausedChats.set(remoteJid, Date.now() + 2 * 60 * 60 * 1000);
+          console.log(`[BOT] Conversación escalada para ${remoteJid}. Bot pausado.`);
+          
+          // Notificar Líder Comercial
+          const { data: _allEmps } = await supabase.rpc('get_empleados');
+          if (_allEmps) {
+             const lideres = _allEmps.filter(e => e.rol === 'Líder Comercial');
+             for (const lider of lideres) {
+                await enviarPushNotificacion("¡Atención Requerida!", `El bot escaló la conversación con ${phoneNumber}`, [lider.id]);
+                let num = lider.telefono ? lider.telefono.replace(/[^0-9]/g, '') : null;
+                if (!num && lider.nombre.toLowerCase().includes("griger")) num = "584248037379";
+                if (!num && lider.nombre.toLowerCase().includes("idalys")) num = "584122966969";
+                if (num) {
+                   if (num.startsWith('0')) num = '58' + num.substring(1);
+                   else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+                   await safeSendMessage(`${num}@s.whatsapp.net`, { text: `🚨 *Atención Requerida*\nEl bot no supo cómo responder o el cliente pidió un asesor.\n\n👤 *Cliente:* ${phoneNumber}\nÚltimo mensaje: "${textMessage}"\n\nPor favor atiende el chat manualmente. El bot está pausado para este chat por 2 horas.` });
+                }
+             }
+          }
         } else if (classification.tipo === 'proyecto_listo') {
           activeChats.delete(remoteJid);
           await safeSendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
