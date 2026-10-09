@@ -251,12 +251,17 @@ supabase
            if (nom.includes("griger")) num = "584248037379";
            else if (nom.includes("idalys")) num = "584122966969";
         }
+        
+        if (num) {
+           if (num.startsWith('0')) num = '58' + num.substring(1);
+           else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+        }
+
         if (num && num.length >= 10) {
            try {
              if (clientSocket && waState === 'CONNECTED') {
                 await safeSendMessage(`${num}@s.whatsapp.net`, { text: `📌 *Nuevo Proyecto Asignado*\nHas sido asignado al proyecto: *${newRecord.titulo}*.` });
                 console.log(`[WHATSAPP] Aviso de asignación a ${enc.nombre} (${num})`);
-                
              }
            } catch(e) {
              console.error(`Error avisando asignación a ${enc.nombre}:`, e.message);
@@ -265,74 +270,91 @@ supabase
       }
     }
 
-    if (oldRecord.estado !== newRecord.estado && newRecord.estado !== 'Archivado') {
-      
+    const notifsToEncargados = [];
+
+    // Título
+    if (oldRecord.titulo !== newRecord.titulo) {
+      notifsToEncargados.push(`✏️ El proyecto cambió su nombre de "${oldRecord.titulo}" a "${newRecord.titulo}"`);
+    }
+
+    // Estado (Mover, Retrasar, Pausar/Archivar/Cancelar)
+    if (oldRecord.estado !== newRecord.estado) {
       const dedupeKey = `${newRecord.id}-${newRecord.estado}`;
-      if (recentUpdates.has(dedupeKey)) {
-        return;
-      }
-      recentUpdates.add(dedupeKey);
-      setTimeout(() => recentUpdates.delete(dedupeKey), 5000);
+      if (!recentUpdates.has(dedupeKey)) {
+        recentUpdates.add(dedupeKey);
+        setTimeout(() => recentUpdates.delete(dedupeKey), 5000);
 
-      console.log(`[🔄 CAMBIO DE ESTADO] Proyecto "${newRecord.titulo}" -> "${newRecord.estado}"`);
-      
-      // Notificar cliente
-      if (newRecord.cliente_telefono) {
-        const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
-        if (numeroLimpiado.length >= 10) {
-          const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha sido movido a la columna: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
-          
-          try {
-            const chatId = `${numeroLimpiado}@s.whatsapp.net`;
-            if (clientSocket && waState === 'CONNECTED') {
-               // safeSendMessage(chatId, { text: mensaje })
-                 // .then(() => console.log(`✅ Notificación enviada a ${numeroLimpiado}`))
-                 // .catch(err => console.error(`❌ Error al enviar aviso a ${numeroLimpiado}:`, err.message));
-            } else {
-               console.log(`[SIMULACIÓN] Mensaje que se habría enviado a ${numeroLimpiado}: ${mensaje}`);
-            }
-          } catch (err) {
-            console.error(`❌ Error general al enviar aviso a ${numeroLimpiado}:`, err.message);
-          }
+        console.log(`[🔄 CAMBIO DE ESTADO] Proyecto "${newRecord.titulo}" -> "${newRecord.estado}"`);
+        
+        const estLower = (newRecord.estado || '').toLowerCase();
+        if (estLower.includes('archivado') || estLower.includes('cancelado') || estLower.includes('pausa') || estLower.includes('detenido')) {
+          notifsToEncargados.push(`🛑 El proyecto "${newRecord.titulo}" pasó a estado: ${newRecord.estado}.\nMotivo: ${newRecord.motivo_cancelacion || 'No especificado'}`);
+        } else if (newRecord.motivo_cancelacion && oldRecord.motivo_cancelacion !== newRecord.motivo_cancelacion) {
+          notifsToEncargados.push(`⚠️ El proyecto "${newRecord.titulo}" retrocedió a la columna ${newRecord.estado}.\nMotivo: ${newRecord.motivo_cancelacion}`);
+        } else {
+          notifsToEncargados.push(`🔄 El proyecto "${newRecord.titulo}" fue movido a la columna: ${newRecord.estado}`);
         }
-      }
 
-      // Enviar notificaciones PUSH y WA a los encargados
-      if (newRecord.encargados && newRecord.encargados.length > 0) {
-        const userIds = newRecord.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
-        const pushMsg = "El proyecto " + newRecord.titulo + " fue movido a la columna: " + newRecord.estado;
-        
-        if (userIds.length > 0) {
-          // Add a 5 second delay so the user has time to background the app
-          setTimeout(async () => {
-            await enviarPushNotificacion("Actualización de Proyecto", pushMsg, userIds);
-          }, 5000);
-        }
-        
-        for (const encargado of newRecord.encargados) {
-          if (!encargado.nombre) {
-            continue;
-          }
-          
-          let num = null;
-          if (encargado.telefono) {
-            num = encargado.telefono.replace(/[^0-9]/g, '');
-          } else {
-            const nom = encargado.nombre.toLowerCase();
-            if (nom.includes("griger")) num = "584248037379";
-            else if (nom.includes("idalys")) num = "584122966969";
-          }
-          
-          if (num && num.length >= 10) {
+        // Notificar cliente solo si no se archiva
+        if (newRecord.estado !== 'Archivado' && newRecord.cliente_telefono) {
+          const numeroLimpiado = newRecord.cliente_telefono.replace(/[^0-9]/g, '');
+          if (numeroLimpiado.length >= 10) {
+            const mensaje = `¡Hola! Te escribimos de Global's para informarte que tu proyecto *"${newRecord.titulo}"* ha sido movido a la fase: *${newRecord.estado}*.\n\nTe seguiremos informando.`;
             try {
               if (clientSocket && waState === 'CONNECTED') {
-                await safeSendMessage(`${num}@s.whatsapp.net`, { text: `⚠️ *Actualización de Proyecto*\n${pushMsg}` });
-                console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
-                 
+                 // safeSendMessage(chatId, { text: mensaje })
               }
-            } catch (err) {
-              console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
+            } catch (err) {}
+          }
+        }
+      }
+    }
+
+    // Levantamiento
+    if (!oldRecord.levantamiento_fecha && newRecord.levantamiento_fecha) {
+       notifsToEncargados.push(`📋 Se llenó la hoja de levantamiento para el proyecto "${newRecord.titulo}"`);
+    }
+
+    // Notas
+    if (oldRecord.notas !== newRecord.notas) {
+       notifsToEncargados.push(`📝 Se agregaron/modificaron las notas en el proyecto "${newRecord.titulo}"`);
+    }
+
+    if (notifsToEncargados.length > 0 && newRecord.encargados && newRecord.encargados.length > 0) {
+      const pushMsg = notifsToEncargados.join('\n\n');
+      const userIds = newRecord.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
+      
+      if (userIds.length > 0) {
+        setTimeout(async () => {
+          await enviarPushNotificacion("Actualización de Proyecto", pushMsg, userIds);
+        }, 5000);
+      }
+      
+      for (const encargado of newRecord.encargados) {
+        if (!encargado.nombre) continue;
+        
+        let num = null;
+        if (encargado.telefono) {
+          num = encargado.telefono.replace(/[^0-9]/g, '');
+        } else {
+          const nom = encargado.nombre.toLowerCase();
+          if (nom.includes("griger")) num = "584248037379";
+          else if (nom.includes("idalys")) num = "584122966969";
+        }
+        
+        if (num) {
+           if (num.startsWith('0')) num = '58' + num.substring(1);
+           else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+        }
+        
+        if (num && num.length >= 10) {
+          try {
+            if (clientSocket && waState === 'CONNECTED') {
+              await safeSendMessage(`${num}@s.whatsapp.net`, { text: `⚠️ *Actualización de Proyecto*\n\n${pushMsg}` });
+              console.log(`[WHATSAPP] Notificación enviada a encargado ${encargado.nombre} (${num})`);
             }
+          } catch (err) {
+            console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
           }
         }
       }
@@ -363,13 +385,48 @@ supabase
       .single();
       
     if (!error && proyecto && proyecto.encargados && proyecto.encargados.length > 0) {
-      // Filtrar a los encargados que no sean el autor del comentario (si es que tenemos su id)
-      // Asumiendo que el autor_id no está disponible directamente o si, mandamos a todos por ahora
+      const isDinamo = newComment.autor_nombre.toLowerCase().includes('dínamo') || newComment.autor_nombre.toLowerCase().includes('dinamo');
+      const isMention = newComment.texto.includes('@');
+      
       const userIds = proyecto.encargados.filter(e => e.user_id && e.nombre !== newComment.autor_nombre).map(e => e.user_id);
+      const pushMsg = `${newComment.autor_nombre} comentó en ${proyecto.titulo}: "${newComment.texto.substring(0, 50)}..."`;
       
       if (userIds.length > 0) {
-        const pushMsg = `${newComment.autor_nombre} comentó en ${proyecto.titulo}: "${newComment.texto.substring(0, 50)}..."`;
         await enviarPushNotificacion("Nuevo Comentario", pushMsg, userIds);
+      }
+
+      if (isDinamo || isMention) {
+        let waText = `💬 *Nuevo comentario en "${proyecto.titulo}"*\n👤 *Por:* ${newComment.autor_nombre}\n\n"${newComment.texto}"\n\n💡 _Recuerda responder o revisar esto directamente desde la app de Global's._`;
+        
+        for (const encargado of proyecto.encargados) {
+           if (!encargado.nombre || encargado.nombre === newComment.autor_nombre) continue;
+           
+           // Si es una mención, idealmente notificar solo al mencionado, pero como no sabemos el mapping exacto del nombre en el texto, 
+           // notificaremos a todos los encargados cuando alguien mencione o Dinamo hable.
+           let num = null;
+           if (encargado.telefono) {
+             num = encargado.telefono.replace(/[^0-9]/g, '');
+           } else {
+             const nom = encargado.nombre.toLowerCase();
+             if (nom.includes("griger")) num = "584248037379";
+             else if (nom.includes("idalys")) num = "584122966969";
+           }
+
+           if (num) {
+              if (num.startsWith('0')) num = '58' + num.substring(1);
+              else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+           }
+
+           if (num && num.length >= 10) {
+             try {
+               if (clientSocket && waState === 'CONNECTED') {
+                 await safeSendMessage(`${num}@s.whatsapp.net`, { text: waText });
+               }
+             } catch (err) {
+               console.error(`Error WA Comentario a ${encargado.nombre}:`, err.message);
+             }
+           }
+        }
       }
     }
   })
@@ -657,7 +714,7 @@ function sleep(ms) {
 
 
 
-cron.schedule("0 3 * * *", async () => {
+cron.schedule("0 8 * * *", async () => {
   console.log("[CRON] Ejecutando resumen diario de proyectos...");
   
   const { data: proyectos, error } = await supabase
@@ -768,3 +825,80 @@ cron.schedule("0 3 * * *", async () => {
   timezone: "America/Caracas"
 });
 
+// Added 9am Cron for Estancados
+cron.schedule("0 9 * * *", async () => {
+  console.log("[CRON 9AM] Verificando proyectos estancados...");
+
+  const { data: proyectos, error } = await supabase
+    .from("proyectos")
+    .select("*")
+    .not("estado", "in", "(" + `"Entregado y cerrado"` + ", " + `"Archivado"` + ", " + `"Cancelado"` + ")");
+
+  if (error || !proyectos) {
+    console.error("Error al consultar proyectos para CRON 9AM:", error);
+    return;
+  }
+
+  const hoyNorm = new Date();
+  hoyNorm.setHours(0,0,0,0);
+
+  for (const pry of proyectos) {
+    if (pry.estado?.toLowerCase().includes('pausa')) continue;
+    if (!pry.encargados || pry.encargados.length === 0) continue;
+
+    let diasTotales = 2; // default
+    if (pry.notas) {
+      const match = pry.notas.match(/\[DÍAS ESTIMADOS FASE ACTUAL:\s*(\d+)\]/i);
+      if (match) diasTotales = parseInt(match[1], 10);
+    }
+
+    const fechaUltima = new Date(pry.fecha_ultima_actualizacion || pry.fecha_creacion);
+    fechaUltima.setHours(0,0,0,0);
+    const deadlineFase = new Date(fechaUltima);
+    deadlineFase.setDate(deadlineFase.getDate() + diasTotales);
+
+    const diffFase = Math.round((deadlineFase - hoyNorm) / (1000 * 60 * 60 * 24));
+
+    let msj = "";
+    if (diffFase === 1) {
+       msj = `⚠️ *ALERTA DE FASE*\nMañana se vence el tiempo estimado para la fase "${pry.estado}" del proyecto "${pry.titulo}". ¡Trata de avanzarlo hoy!`;
+    } else if (diffFase <= 0) {
+       const diasAtraso = Math.abs(diffFase);
+       msj = `⏳ *PROYECTO ESTANCADO*\nEl proyecto "${pry.titulo}" lleva estancado en la fase "${pry.estado}" por ${diasAtraso === 0 ? 'hoy' : `${diasAtraso} días más de lo previsto`}. ¡Requiere tu acción!`;
+    }
+
+    if (msj) {
+      const userIds = pry.encargados.filter(e => (e.user_id || e.id)).map(e => (e.user_id || e.id));
+      if (userIds.length > 0) {
+        await enviarPushNotificacion(diffFase === 1 ? "⚠️ Alerta de Fase" : "⏳ Proyecto Estancado", msj, userIds);
+      }
+
+      for (const encargado of pry.encargados) {
+        if (!encargado.nombre) continue;
+        let num = null;
+        if (encargado.telefono) {
+          num = encargado.telefono.replace(/[^0-9]/g, '');
+        } else {
+          const nom = encargado.nombre.toLowerCase();
+          if (nom.includes("griger")) num = "584248037379";
+          else if (nom.includes("idalys")) num = "584122966969";
+        }
+        
+        if (num) {
+           if (num.startsWith('0')) num = '58' + num.substring(1);
+           else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+        }
+
+        if (num && num.length >= 10) {
+          try {
+            if (clientSocket && waState === 'CONNECTED') {
+              await safeSendMessage(`${num}@s.whatsapp.net`, { text: msj });
+            }
+          } catch (err) {}
+        }
+      }
+    }
+  }
+}, {
+  timezone: "America/Caracas"
+});
