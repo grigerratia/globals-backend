@@ -11,7 +11,7 @@ import { createClient } from '@supabase/supabase-js';
 import express from 'express';
 import cors from 'cors';
 import qrcodeData from 'qrcode';
-import { default as makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import { default as makeWASocket, useMultiFileAuthState, DisconnectReason, initAuthCreds, BufferJSON, proto } from '@whiskeysockets/baileys';
 import pino from 'pino';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -219,7 +219,74 @@ app.get('/health', (_req, res) => {
 const recentUpdates = new Set();
 const activeChats = new Map();
 
+const useSupabaseAuthState = async (supabaseClient, tableName = 'whatsapp_auth') => {
+  const writeData = async (data, id) => {
+    try {
+      const jsonStr = JSON.stringify(data, BufferJSON.replacer);
+      const jsonObj = JSON.parse(jsonStr);
+      await supabaseClient.from(tableName).upsert({ id, data: jsonObj });
+    } catch (e) {
+      console.error('Error guardando auth en Supabase', e);
+    }
+  };
 
+  const readData = async (id) => {
+    try {
+      const { data, error } = await supabaseClient.from(tableName).select('data').eq('id', id).single();
+      if (error || !data) return null;
+      const jsonStr = JSON.stringify(data.data);
+      return JSON.parse(jsonStr, BufferJSON.reviver);
+    } catch (e) {
+      console.error('Error leyendo auth en Supabase', e);
+      return null;
+    }
+  };
+
+  const removeData = async (id) => {
+    await supabaseClient.from(tableName).delete().eq('id', id);
+  };
+
+  const creds = await readData('creds') || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          await Promise.all(
+            ids.map(async (id) => {
+              let value = await readData(`${type}-${id}`);
+              if (type === 'app-state-sync-key' && value) {
+                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+              }
+              data[id] = value;
+            })
+          );
+          return data;
+        },
+        set: async (data) => {
+          const tasks = [];
+          for (const category in data) {
+            for (const id in data[category]) {
+              const value = data[category][id];
+              const key = `${category}-${id}`;
+              if (value) {
+                tasks.push(writeData(value, key));
+              } else {
+                tasks.push(removeData(key));
+              }
+            }
+          }
+          await Promise.all(tasks);
+        }
+      }
+    },
+    saveCreds: () => {
+      return writeData(creds, 'creds');
+    }
+  };
+};
 
 
 
@@ -535,7 +602,7 @@ function safeSendMessage(jid, message) {
 
 async function connectToWhatsApp() {
 
-  const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+  const { state, saveCreds } = await useSupabaseAuthState(supabase, 'whatsapp_auth');
   
   const sock = makeWASocket({
     auth: state,
@@ -718,12 +785,12 @@ function checkAndAddAiRequest() {
       if (shouldReconnect) {
         setTimeout(connectToWhatsApp, 2000);
       } else {
-        console.log('[WHATSAPP] Sesión cerrada (loggedOut). Borrando credenciales y reiniciando...');
+        console.log('[WHATSAPP] Sesión cerrada (loggedOut). Borrando credenciales en Supabase y reiniciando...');
         waState = 'DISCONNECTED';
         try {
-          fs.rmSync('./baileys_auth_info', { recursive: true, force: true });
+          await supabase.from('whatsapp_auth').delete().neq('id', 'nada');
         } catch(err) {
-          console.error('Error al borrar .wwebjs_auth:', err);
+          console.error('Error al borrar auth en Supabase:', err);
         }
         setTimeout(connectToWhatsApp, 3000);
       }
