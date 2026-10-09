@@ -672,6 +672,7 @@ function checkAndAddAiRequest() {
       const remoteJid = msg.key.remoteJid;
       if (!remoteJid || remoteJid.includes("@g.us") || remoteJid === 'status@broadcast') return;
       const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
+      const pushName = msg.pushName || "un cliente";
 
       if (!textMessage || textMessage.trim() === '') return;
 
@@ -847,14 +848,15 @@ function checkAndAddAiRequest() {
           if (_allEmps) {
              const lideres = _allEmps.filter(e => e.rol === 'Líder Comercial');
              for (const lider of lideres) {
-                await enviarPushNotificacion("¡Atención Requerida!", `El bot escaló la conversación con ${phoneNumber}`, [lider.id]);
+                await enviarPushNotificacion("¡Atención Requerida!", `El bot escaló la conversación con ${pushName}`, [lider.id]);
                 let num = lider.telefono ? lider.telefono.replace(/[^0-9]/g, '') : null;
                 if (!num && lider.nombre.toLowerCase().includes("griger")) num = "584248037379";
                 if (!num && lider.nombre.toLowerCase().includes("idalys")) num = "584122966969";
                 if (num) {
                    if (num.startsWith('0')) num = '58' + num.substring(1);
                    else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
-                   await safeSendMessage(`${num}@s.whatsapp.net`, { text: `🚨 *Atención Requerida*\nEl bot no supo cómo responder o el cliente pidió un asesor.\n\n👤 *Cliente:* ${phoneNumber}\nÚltimo mensaje: "${textMessage}"\n\nPor favor atiende el chat manualmente. El bot está pausado para este chat por 2 horas.` });
+                   const displayPhone = phoneNumber.length >= 14 ? '(Número Oculto por Meta)' : phoneNumber;
+                   await safeSendMessage(`${num}@s.whatsapp.net`, { text: `🚨 *Atención Requerida*\nEl bot no supo cómo responder o el cliente pidió un asesor.\n\n👤 *Cliente:* ${pushName} - ${displayPhone}\nÚltimo mensaje: "${textMessage}"\n\nPor favor atiende el chat manualmente. El bot está pausado para este chat por 2 horas.` });
                 }
              }
           }
