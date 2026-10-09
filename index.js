@@ -657,7 +657,7 @@ function sleep(ms) {
 
 
 
-cron.schedule("48 2 * * *", async () => {
+cron.schedule("0 3 * * *", async () => {
   console.log("[CRON] Ejecutando resumen diario de proyectos...");
   
   const { data: proyectos, error } = await supabase
@@ -745,6 +745,12 @@ cron.schedule("48 2 * * *", async () => {
         if (nom.includes("griger")) num = "584248037379";
         else if (nom.includes("idalys")) num = "584122966969";
       }
+      
+      // Asegurar código de país 58
+      if (num) {
+        if (num.startsWith('0')) num = '58' + num.substring(1);
+        else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+      }
 
       if (num && num.length >= 10) {
         try {
@@ -761,5 +767,4 @@ cron.schedule("48 2 * * *", async () => {
 }, {
   timezone: "America/Caracas"
 });
-
 
