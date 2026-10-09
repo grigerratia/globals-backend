@@ -586,7 +586,7 @@ supabase
 
 
 let clientSocket = null;
-
+const botSentMessageIds = new Set();
 
 // --- WHATSAPP MESSAGE QUEUE ---
 const waMessageQueue = [];
@@ -601,6 +601,11 @@ async function processWaQueue() {
     try {
       if (clientSocket) {
         const result = await clientSocket.sendMessage(jid, message);
+        if (result?.key?.id) {
+          botSentMessageIds.add(result.key.id);
+          // Eliminar el ID después de 10 minutos para liberar memoria
+          setTimeout(() => botSentMessageIds.delete(result.key.id), 10 * 60 * 1000);
+        }
         resolve(result);
       } else {
         reject(new Error("WhatsApp socket no conectado"));
@@ -671,7 +676,12 @@ function checkAndAddAiRequest() {
       if (!textMessage || textMessage.trim() === '') return;
 
       if (msg.key.fromMe) {
-        // Humano respondió
+        if (botSentMessageIds.has(msg.key.id)) {
+          // Fue enviado por el propio bot. Lo ignoramos.
+          return;
+        }
+
+        // Humano respondió manualmente desde el teléfono/web
         let userHistory = activeChats.get(remoteJid) || [];
         userHistory.push({ role: "model", parts: [{ text: textMessage }] });
         activeChats.set(remoteJid, userHistory);
