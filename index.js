@@ -712,13 +712,14 @@ function checkAndAddAiRequest() {
          return;
       }
 
-      const phoneNumber = remoteJid.split('@')[0];
+      const rawPhone = remoteJid.split('@')[0];
+      const phoneNumber = rawPhone.split(':')[0];
         
         // Buscar si el cliente ya tiene proyectos
         const { data: clientProjects } = await supabase
           .from('proyectos')
           .select('titulo, estado, notas, fecha_entrega')
-          .or(`cliente_telefono.ilike.%${phoneNumber}%,notas.ilike.%${remoteJid}%`)
+          .or(`cliente_telefono.ilike.%${phoneNumber}%,notas.ilike.%${phoneNumber}%`)
           .order('fecha_ultima_actualizacion', { ascending: false })
           .limit(3);
 
@@ -865,17 +866,15 @@ function checkAndAddAiRequest() {
           await safeSendMessage(remoteJid, { text: "Gracias por la información. Hemos registrado los detalles de su proyecto y nuestro equipo comercial los revisará en breve." });
           
           
-          // Buscar Líder Comercial por defecto
+          // Buscar Encargados por defecto
           const { data: _allEmps } = await supabase.rpc('get_empleados');
           let encargados_default = [];
           if (_allEmps) {
-             const lideres = _allEmps.filter(e => e.rol === 'Líder Comercial');
-             if (lideres.length > 0) {
-                encargados_default = [{ id: lideres[0].id, nombre: lideres[0].nombre, rol: 'Líder Comercial', email: lideres[0].email, telefono: lideres[0].telefono }];
-             }
+             const lideres = _allEmps.filter(e => ['Líder Comercial', 'Líder de Operaciones', 'Líder de Producción'].includes(e.rol));
+             encargados_default = lideres.map(l => ({ id: l.id, nombre: l.nombre, rol: l.rol, email: l.email, telefono: l.telefono }));
           }
 
-          const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]\n\n[WJID:' + remoteJid + ']';
+          const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]\n\n[WJID:' + phoneNumber + ']';
           const { error: insertErr } = await supabase.from('proyectos').insert([{
             titulo: classification.titulo,
             cliente_nombre: classification.nombre_cliente,
