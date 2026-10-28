@@ -844,10 +844,10 @@ function checkAndAddAiRequest() {
           humanPausedChats.set(remoteJid, Date.now() + 2 * 60 * 60 * 1000);
           console.log(`[BOT] Conversación escalada para ${remoteJid}. Bot pausado.`);
           
-          // Notificar Líder Comercial
+          // Notificar Director Comercial
           const { data: _allEmps } = await supabase.rpc('get_empleados');
           if (_allEmps) {
-             const lideres = _allEmps.filter(e => e.rol === 'Líder Comercial');
+             const lideres = _allEmps.filter(e => e.rol === 'Director Comercial' || e.rol === 'Líder Comercial');
              for (const lider of lideres) {
                 await enviarPushNotificacion("¡Atención Requerida!", `El bot escaló la conversación con ${pushName}`, [lider.id]);
                 let num = lider.telefono ? lider.telefono.replace(/[^0-9]/g, '') : null;
@@ -870,8 +870,18 @@ function checkAndAddAiRequest() {
           const { data: _allEmps } = await supabase.rpc('get_empleados');
           let encargados_default = [];
           if (_allEmps) {
-             const lideres = _allEmps.filter(e => ['Líder Comercial', 'Líder de Operaciones', 'Líder de Producción'].includes(e.rol));
-             encargados_default = lideres.map(l => ({ id: l.id, nombre: l.nombre, rol: l.rol, email: l.email, telefono: l.telefono }));
+             const lideres = _allEmps.filter(e => {
+                const r = (e.rol || '').toLowerCase();
+                return r.includes('comercial') || r.includes('operaciones') || r.includes('operativo') || r.includes('producci');
+             });
+             encargados_default = lideres.map(l => {
+                let rNorm = l.rol;
+                if (rNorm === 'Líder Comercial') rNorm = 'Director Comercial';
+                else if (rNorm === 'Líder de Operaciones') rNorm = 'Gerente de Operaciones';
+                else if (rNorm === 'Líder de Producción') rNorm = 'Asistente de Operaciones';
+                else if (rNorm === 'Administración' || rNorm === 'Administracion') rNorm = 'Líder Administrativo y RRHH';
+                return { id: l.id, nombre: l.nombre, rol: rNorm, email: l.email, telefono: l.telefono };
+             });
           }
 
           const notasFinales = (classification.notas || '') + '\n\n[DÍAS ESTIMADOS FASE ACTUAL: 3]\n\n[WJID:' + phoneNumber + ']';
@@ -991,6 +1001,7 @@ cron.schedule("0 8 * * *", async () => {
     'Instalador': ['instalar', 'instalación'],
     'Impresor u Operador': ['impresión', 'producción'],
     'Fabricante': ['fabricación'],
+    'Director Comercial': ['conversación', 'levantamiento', 'presupuesto', 'cobranza', 'cotización'],
     'Líder Comercial': ['conversación', 'levantamiento', 'presupuesto', 'cobranza', 'cotización']
   };
 
