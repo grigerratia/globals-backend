@@ -152,6 +152,15 @@ Caso 4: Si ya tienes los detalles del pedido, la persona de contacto, el TELÉFO
   "cliente_telefono": "0987654321",
   "notas": "Descripción completa de lo que pidió el cliente",
   "estado": "En Conversación"
+}
+
+Caso 5: Si el cliente pregunta por el estado, estatus, avance, cómo va su proyecto/pedido o qué hay adelantado:
+TIENES ESTRICTAMENTE PROHIBIDO dar nombres de fases o columnas internas (como 'Levantamiento', 'En Diseño', 'En Producción', 'Logística y Compras', 'En Instalación', etc.) o detallar avances técnicos.
+NUNCA crees un nuevo proyecto si solo pregunta por su trabajo en curso.
+Responde de forma amable, profesional y concisa indicando únicamente que su proyecto se encuentra actualmente en proceso con el equipo y que se le mantendrá informado ante cualquier novedad:
+{
+  "tipo": "conversacion",
+  "respuesta": "¡Hola! Su proyecto se encuentra actualmente en proceso con nuestro equipo. Cualquier novedad o avance importante se lo estaremos notificando oportunamente por este medio."
 }`;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -726,10 +735,10 @@ function checkAndAddAiRequest() {
         let dynamicPrompt = SYSTEM_PROMPT;
         if (clientProjects && clientProjects.length > 0) {
           const projectList = clientProjects.map(p => 
-            `- Título: ${p.titulo}, Estado: ${p.estado}, Notas: ${p.notas}, Entrega: ${p.fecha_entrega || 'N/A'}`
+            `- Proyecto: "${p.titulo}"`
           ).join('\n');
           
-          dynamicPrompt += `\n\n¡IMPORTANTE! Este cliente YA TIENE los siguientes proyectos registrados en el sistema:\n${projectList}\n\nSi el cliente está preguntando por el estatus de su pedido, infórmale cordialmente basándote en esta información y NO generes un nuevo proyecto (usa tipo: conversacion). Si el cliente está pidiendo algo COMPLETAMENTE NUEVO, entonces sí pide los datos faltantes para crear un nuevo proyecto.`;
+          dynamicPrompt += `\n\n¡IMPORTANTE! Este cliente YA TIENE los siguientes proyectos registrados en el sistema:\n${projectList}\n\nREGLA ESTRICTA DE ESTADO DE PROYECTO:\n- Si el cliente pregunta cómo va su proyecto, su estado, estatus o qué hay adelantado: NUNCA menciones fases internas (como Levantamiento, En Diseño, En Producción, Logística, Instalación, etc.) ni detalles de avance. Solo responde de forma profesional y concisa que su proyecto se encuentra actualmente en proceso con nuestro equipo y que le mantendrán informado ante cualquier novedad (usa tipo: "conversacion", por ejemplo: "¡Hola! Su proyecto se encuentra actualmente en proceso con nuestro equipo. Cualquier novedad o avance importante se lo estaremos notificando oportunamente por este medio."). NO generes un nuevo proyecto.\n- Si el cliente está solicitando un trabajo, cotización o requerimiento COMPLETAMENTE NUEVO, entonces sí pide los datos faltantes para crear un nuevo proyecto.`;
         }
 
         const googleKeys = [
