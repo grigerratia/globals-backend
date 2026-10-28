@@ -872,6 +872,7 @@ function checkAndAddAiRequest() {
           if (_allEmps) {
              const lideres = _allEmps.filter(e => {
                 const r = (e.rol || '').toLowerCase();
+                if (r.includes('master')) return false;
                 return r.includes('comercial') || r.includes('operaciones') || r.includes('operativo') || r.includes('producci');
              });
              encargados_default = lideres.map(l => {
