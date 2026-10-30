@@ -151,11 +151,11 @@ Caso 4: Si ya tienes los detalles del pedido, la persona de contacto, el TELÉFO
   "empresa": "Hato Grill",
   "cliente_telefono": "0987654321",
   "notas": "Descripción completa de lo que pidió el cliente",
-  "estado": "En Conversación"
+  "estado": "Levantamiento Técnico"
 }
 
 Caso 5: Si el cliente pregunta por el estado, estatus, avance, cómo va su proyecto/pedido o qué hay adelantado:
-TIENES ESTRICTAMENTE PROHIBIDO dar nombres de fases o columnas internas (como 'Levantamiento', 'En Diseño', 'En Producción', 'Logística y Compras', 'En Instalación', etc.) o detallar avances técnicos.
+TIENES ESTRICTAMENTE PROHIBIDO dar nombres de fases o columnas internas (como 'Levantamiento Técnico', 'Diseño y Aprobación', 'Logística y Materiales', 'En Fabricación', 'Instalación y Montaje', etc.) o detallar avances técnicos.
 NUNCA crees un nuevo proyecto si solo pregunta por su trabajo en curso.
 Responde de forma amable, profesional y concisa indicando únicamente que su proyecto se encuentra actualmente en proceso con el equipo y que se le mantendrá informado ante cualquier novedad:
 {
@@ -165,12 +165,12 @@ Responde de forma amable, profesional y concisa indicando únicamente que su pro
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Asegurar que la columna 'En Conversación' exista en Supabase al arrancar
+// Asegurar que la columna 'Levantamiento Técnico' exista en Supabase al arrancar
 async function asegurarColumna() {
-  const { data, error } = await supabase.from('columnas').select('nombre').eq('nombre', 'En Conversación');
+  const { data, error } = await supabase.from('columnas').select('nombre').eq('nombre', 'Levantamiento Técnico');
   if (!error && data.length === 0) {
-    await supabase.from('columnas').insert([{ nombre: 'En Conversación', orden: -1 }]);
-    console.log('✅ Columna "En Conversación" creada oficialmente en la base de datos.');
+    await supabase.from('columnas').insert([{ nombre: 'Levantamiento Técnico', orden: 1 }]);
+    console.log('✅ Columna "Levantamiento Técnico" creada oficialmente en la base de datos.');
   }
 }
 asegurarColumna();
@@ -738,7 +738,7 @@ function checkAndAddAiRequest() {
             `- Proyecto: "${p.titulo}"`
           ).join('\n');
           
-          dynamicPrompt += `\n\n¡IMPORTANTE! Este cliente YA TIENE los siguientes proyectos registrados en el sistema:\n${projectList}\n\nREGLA ESTRICTA DE ESTADO DE PROYECTO:\n- Si el cliente pregunta cómo va su proyecto, su estado, estatus o qué hay adelantado: NUNCA menciones fases internas (como Levantamiento, En Diseño, En Producción, Logística, Instalación, etc.) ni detalles de avance. Solo responde de forma profesional y concisa que su proyecto se encuentra actualmente en proceso con nuestro equipo y que le mantendrán informado ante cualquier novedad (usa tipo: "conversacion", por ejemplo: "¡Hola! Su proyecto se encuentra actualmente en proceso con nuestro equipo. Cualquier novedad o avance importante se lo estaremos notificando oportunamente por este medio."). NO generes un nuevo proyecto.\n- Si el cliente está solicitando un trabajo, cotización o requerimiento COMPLETAMENTE NUEVO, entonces sí pide los datos faltantes para crear un nuevo proyecto.`;
+          dynamicPrompt += `\n\n¡IMPORTANTE! Este cliente YA TIENE los siguientes proyectos registrados en el sistema:\n${projectList}\n\nREGLA ESTRICTA DE ESTADO DE PROYECTO:\n- Si el cliente pregunta cómo va su proyecto, su estado, estatus o qué hay adelantado: NUNCA menciones fases internas (como Levantamiento Técnico, Diseño y Aprobación, Logística y Materiales, En Fabricación, Instalación y Montaje, etc.) ni detalles de avance. Solo responde de forma profesional y concisa que su proyecto se encuentra actualmente en proceso con nuestro equipo y que le mantendrán informado ante cualquier novedad (usa tipo: "conversacion", por ejemplo: "¡Hola! Su proyecto se encuentra actualmente en proceso con nuestro equipo. Cualquier novedad o avance importante se lo estaremos notificando oportunamente por este medio."). NO generes un nuevo proyecto.\n- Si el cliente está solicitando un trabajo, cotización o requerimiento COMPLETAMENTE NUEVO, entonces sí pide los datos faltantes para crear un nuevo proyecto.`;
         }
 
         const googleKeys = [
@@ -901,7 +901,7 @@ function checkAndAddAiRequest() {
             cliente_empresa: classification.empresa,
             cliente_telefono: classification.cliente_telefono,
             notas: notasFinales.trim(),
-            estado: classification.estado || 'En Conversación',
+            estado: classification.estado || 'Levantamiento Técnico',
             fecha_entrega: null,
             encargados: encargados_default
           }]);
@@ -999,7 +999,7 @@ cron.schedule("0 8 * * *", async () => {
   const { data: proyectos, error } = await supabase
     .from("proyectos")
     .select("*")
-    .not("estado", "in", "(" + `"Entregado y cerrado"` + ", " + `"Archivado"` + ")");
+    .not("estado", "in", "(" + `"Entregado y Cerrado"` + ", " + `"Entregado y cerrado"` + ", " + `"Archivado"` + ")");
 
   if (error || !proyectos) {
     console.error("Error al consultar proyectos para CRON:", error);
@@ -1007,12 +1007,14 @@ cron.schedule("0 8 * * *", async () => {
   }
 
   const rolesMap = {
-    'Diseñador': ['en diseño'],
-    'Instalador': ['instalar', 'instalación'],
-    'Impresor u Operador': ['impresión', 'producción'],
-    'Fabricante': ['fabricación'],
-    'Director Comercial': ['conversación', 'levantamiento', 'presupuesto', 'cobranza', 'cotización'],
-    'Líder Comercial': ['conversación', 'levantamiento', 'presupuesto', 'cobranza', 'cotización']
+    'Diseñador': ['diseño'],
+    'Instalador': ['instalación', 'montaje'],
+    'Impresor u Operador': ['fabricación', 'producción'],
+    'Fabricante': ['fabricación', 'producción'],
+    'Logística y Compras': ['logística', 'material'],
+    'Director Comercial': ['levantamiento'],
+    'Gerente de Operaciones': ['operaciones', 'fabricación', 'instalación', 'levantamiento', 'diseño', 'material'],
+    'Asistente de Operaciones': ['operaciones', 'fabricación', 'instalación', 'levantamiento', 'diseño', 'material']
   };
 
   const hoyNorm = new Date();
@@ -1112,7 +1114,7 @@ cron.schedule("0 9 * * *", async () => {
   const { data: proyectos, error } = await supabase
     .from("proyectos")
     .select("*")
-    .not("estado", "in", "(" + `"Entregado y cerrado"` + ", " + `"Archivado"` + ", " + `"Cancelado"` + ")");
+    .not("estado", "in", "(" + `"Entregado y Cerrado"` + ", " + `"Entregado y cerrado"` + ", " + `"Archivado"` + ", " + `"Cancelado"` + ")");
 
   if (error || !proyectos) {
     console.error("Error al consultar proyectos para CRON 9AM:", error);
