@@ -235,6 +235,37 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// Endpoint para verificar inmediatamente altas o bajas de usuarios
+app.post('/api/admin/notify-user-change', async (req, res) => {
+  try {
+    await checkUserChanges();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Endpoint para eliminar un usuario del sistema desde el panel de Administración/Master
+app.post('/api/admin/delete-user', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: "userId es requerido" });
+
+    await supabase.from("fcm_tokens").delete().eq("user_id", userId);
+    await supabase.from("notificaciones").delete().eq("user_id", userId);
+
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) throw error;
+
+    console.log(`[ADMIN DELETE] Usuario ${userId} eliminado exitosamente`);
+    await checkUserChanges();
+    res.json({ ok: true, message: "Usuario eliminado con éxito" });
+  } catch (e) {
+    console.error("Error al eliminar usuario:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 const recentUpdates = new Set();
 const activeChats = new Map();
@@ -319,6 +350,127 @@ const useSupabaseAuthState = async (supabaseClient, tableName = 'whatsapp_auth')
     }
   };
 };
+
+// --- FUNCIONES DE NOTIFICACIÓN PARA EL ROL DE ADMINISTRACIÓN Y RRHH ---
+async function getAdministradores() {
+  try {
+    const { data: emps, error } = await supabase.rpc('get_empleados');
+    if (error || !emps) {
+      console.error('[ADMIN] Error obteniendo empleados:', error?.message || error);
+      return [];
+    }
+    return emps.filter(e => {
+      const rol = (e.rol || e.raw_user_meta_data?.rol || '').toLowerCase();
+      return rol.includes('admin') || rol.includes('rrhh') || rol.includes('recurso') || rol.includes('master');
+    });
+  } catch (err) {
+    console.error('[ADMIN] Excepción en getAdministradores:', err);
+    return [];
+  }
+}
+
+async function notificarAdministradores(tituloPush, cuerpoPush, textoWhatsApp) {
+  try {
+    const admins = await getAdministradores();
+    if (!admins || admins.length === 0) {
+      console.log('[ADMIN NOTIF] No se encontraron administradores para notificar');
+      return;
+    }
+
+    const adminIds = admins.map(a => a.id).filter(Boolean);
+    if (adminIds.length > 0) {
+      await enviarPushNotificacion(tituloPush, cuerpoPush, adminIds);
+      console.log(`[ADMIN NOTIF PUSH] Enviada a ${adminIds.length} admin(s): "${tituloPush}"`);
+    }
+
+    for (const admin of admins) {
+      let num = admin.telefono ? admin.telefono.replace(/[^0-9]/g, '') : null;
+      if (!num && admin.nombre) {
+        const nom = admin.nombre.toLowerCase();
+        if (nom.includes("neida")) num = "584147732855";
+        else if (nom.includes("griger")) num = "584248037379";
+      }
+
+      if (num) {
+        if (num.startsWith('0')) num = '58' + num.substring(1);
+        else if (!num.startsWith('58') && num.length === 10) num = '58' + num;
+      }
+
+      if (num && num.length >= 10) {
+        try {
+          if (clientSocket && waState === 'CONNECTED') {
+            await safeSendMessage(`${num}@s.whatsapp.net`, { text: textoWhatsApp });
+            console.log(`[ADMIN NOTIF WA] Enviada a ${admin.nombre || 'Admin'} (${num})`);
+          }
+        } catch (e) {
+          console.error(`[ADMIN NOTIF WA] Error enviando a ${admin.nombre}:`, e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[ADMIN NOTIF] Error general notificarAdministradores:', e);
+  }
+}
+
+// --- MONITOREO DE USUARIOS (CREACIÓN / ELIMINACIÓN) ---
+let cachedEmployees = null;
+let isCheckingUsers = false;
+
+async function checkUserChanges() {
+  if (isCheckingUsers) return;
+  isCheckingUsers = true;
+  try {
+    const { data: currentEmps, error } = await supabase.rpc('get_empleados');
+    if (error || !currentEmps) {
+      isCheckingUsers = false;
+      return;
+    }
+
+    if (!cachedEmployees) {
+      cachedEmployees = new Map(currentEmps.map(u => [u.id, u]));
+      console.log(`[USER MONITOR] Monitoreo iniciado con ${cachedEmployees.size} usuarios.`);
+      isCheckingUsers = false;
+      return;
+    }
+
+    // 1. Detectar usuarios agregados
+    const addedUsers = currentEmps.filter(u => !cachedEmployees.has(u.id));
+    for (const u of addedUsers) {
+      const nombre = u.nombre || u.raw_user_meta_data?.nombre || u.email;
+      const rol = u.rol || u.raw_user_meta_data?.rol || 'Usuario';
+      const tituloPush = "👤 Nuevo Usuario Registrado";
+      const cuerpoPush = `${nombre} se incorporó al sistema con el rol: ${rol}.`;
+      const textoWA = `👤 *Nuevo Usuario en el Sistema*\nSe ha registrado un nuevo usuario:\n*Nombre:* ${nombre}\n*Rol:* ${rol}\n*Email:* ${u.email}${u.telefono ? `\n*Teléfono:* ${u.telefono}` : ''}`;
+
+      console.log(`[ADMIN NOTIF] Nuevo usuario: ${nombre} (${rol})`);
+      await notificarAdministradores(tituloPush, cuerpoPush, textoWA);
+    }
+
+    // 2. Detectar usuarios eliminados
+    const currentIds = new Set(currentEmps.map(u => u.id));
+    const deletedUsers = Array.from(cachedEmployees.values()).filter(u => !currentIds.has(u.id));
+    for (const u of deletedUsers) {
+      const nombre = u.nombre || u.raw_user_meta_data?.nombre || u.email;
+      const rol = u.rol || u.raw_user_meta_data?.rol || 'Usuario';
+      const tituloPush = "🗑️ Usuario Eliminado";
+      const cuerpoPush = `El usuario ${nombre} (${rol}) ha sido eliminado del sistema.`;
+      const textoWA = `🗑️ *Usuario Eliminado*\nHa sido retirado del sistema:\n*Usuario:* ${nombre}\n*Rol:* ${rol}\n*Email:* ${u.email}`;
+
+      console.log(`[ADMIN NOTIF] Usuario eliminado: ${nombre} (${rol})`);
+      await notificarAdministradores(tituloPush, cuerpoPush, textoWA);
+    }
+
+    cachedEmployees = new Map(currentEmps.map(u => [u.id, u]));
+  } catch (err) {
+    console.error('[USER MONITOR] Error en checkUserChanges:', err);
+  } finally {
+    isCheckingUsers = false;
+  }
+}
+
+// Iniciar monitoreo en segundo plano
+setTimeout(checkUserChanges, 5000);
+setInterval(checkUserChanges, 15000);
 
 
 
@@ -496,6 +648,83 @@ supabase
             console.error(`❌ Error al enviar aviso WA a encargado ${encargado.nombre}:`, err.message);
           }
         }
+      }
+    }
+
+    // --- NOTIFICACIÓN ADMINISTRACIÓN: MATERIALES AGREGADOS PARA COMPRA ---
+    const oldMats = Array.isArray(oldRecord.materiales) ? oldRecord.materiales : [];
+    const newMats = Array.isArray(newRecord.materiales) ? newRecord.materiales : [];
+    const materialesAgregados = newMats.filter(nm => {
+      if (!nm || !nm.nombre) return false;
+      return !oldMats.some(om => (om.id && nm.id && om.id === nm.id) || (om.nombre && om.nombre.trim().toLowerCase() === nm.nombre.trim().toLowerCase()));
+    });
+
+    if (materialesAgregados.length > 0) {
+      const dedupeKey = `mat-${newRecord.id}-${materialesAgregados.map(m => m.nombre).sort().join(',')}`;
+      if (!recentUpdates.has(dedupeKey)) {
+        recentUpdates.add(dedupeKey);
+        setTimeout(() => recentUpdates.delete(dedupeKey), 8000);
+
+        const resumenMats = materialesAgregados.map(m => m.nombre + (m.cantidad ? ` (x${m.cantidad})` : '')).join(', ');
+        const pushTitulo = "🛒 Materiales para Compra";
+        const pushCuerpo = `${newRecord.titulo}: se agregaron ${materialesAgregados.length} material(es) para compra (${resumenMats.substring(0, 70)}${resumenMats.length > 70 ? '...' : ''}).`;
+        const waTexto = `🛒 *Materiales para Compra*\nSe agregaron materiales al proyecto *"${newRecord.titulo}"*:\n${materialesAgregados.map(m => `• ${m.nombre}${m.cantidad ? ` (Cant: ${m.cantidad})` : ''}`).join('\n')}\n\n_Favor revisar y gestionar en el módulo de Administración._`;
+
+        await notificarAdministradores(pushTitulo, pushCuerpo, waTexto);
+      }
+    }
+
+    // --- NOTIFICACIÓN ADMINISTRACIÓN: PRESUPUESTO MARCADO COMO APROBADO ---
+    const presupuestoFueAprobado = (!oldRecord.presupuesto_aprobado && newRecord.presupuesto_aprobado === true);
+    if (presupuestoFueAprobado) {
+      const dedupeKey = `presupuesto-${newRecord.id}`;
+      if (!recentUpdates.has(dedupeKey)) {
+        recentUpdates.add(dedupeKey);
+        setTimeout(() => recentUpdates.delete(dedupeKey), 8000);
+
+        const contactoInfo = newRecord.cliente_empresa || newRecord.cliente_nombre ? ` (${newRecord.cliente_empresa || newRecord.cliente_nombre})` : '';
+        const pushTitulo = "💰 Presupuesto Aprobado";
+        const pushCuerpo = `El proyecto "${newRecord.titulo}"${contactoInfo} fue marcado con presupuesto aprobado.`;
+        const waTexto = `💰 *Presupuesto Aprobado*\nSe marcó como aprobado el presupuesto del proyecto:\n*${newRecord.titulo}*${contactoInfo ? `\n*Contacto:* ${newRecord.cliente_empresa || newRecord.cliente_nombre}` : ''}\n*Fase:* ${newRecord.estado || 'En proceso'}`;
+
+        await notificarAdministradores(pushTitulo, pushCuerpo, waTexto);
+      }
+    }
+  })
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'proyectos' }, async (payload) => {
+    const newRecord = payload.new;
+    if (!newRecord) return;
+
+    // Notificar a administración si el nuevo proyecto tiene materiales agregados para comprar
+    const newMats = Array.isArray(newRecord.materiales) ? newRecord.materiales : [];
+    if (newMats.length > 0) {
+      const dedupeKey = `mat-insert-${newRecord.id}`;
+      if (!recentUpdates.has(dedupeKey)) {
+        recentUpdates.add(dedupeKey);
+        setTimeout(() => recentUpdates.delete(dedupeKey), 8000);
+
+        const resumenMats = newMats.map(m => m.nombre + (m.cantidad ? ` (x${m.cantidad})` : '')).join(', ');
+        const pushTitulo = "🛒 Materiales para Compra";
+        const pushCuerpo = `Nuevo proyecto "${newRecord.titulo}": requiere ${newMats.length} material(es) para compra (${resumenMats.substring(0, 70)}${resumenMats.length > 70 ? '...' : ''}).`;
+        const waTexto = `🛒 *Materiales para Compra*\nNuevo proyecto *"${newRecord.titulo}"* creado con materiales para compra:\n${newMats.map(m => `• ${m.nombre}${m.cantidad ? ` (Cant: ${m.cantidad})` : ''}`).join('\n')}\n\n_Favor revisar y gestionar en el módulo de Administración._`;
+
+        await notificarAdministradores(pushTitulo, pushCuerpo, waTexto);
+      }
+    }
+
+    // Notificar a administración si el nuevo proyecto ya viene con presupuesto aprobado
+    if (newRecord.presupuesto_aprobado === true) {
+      const dedupeKey = `presupuesto-insert-${newRecord.id}`;
+      if (!recentUpdates.has(dedupeKey)) {
+        recentUpdates.add(dedupeKey);
+        setTimeout(() => recentUpdates.delete(dedupeKey), 8000);
+
+        const contactoInfo = newRecord.cliente_empresa || newRecord.cliente_nombre ? ` (${newRecord.cliente_empresa || newRecord.cliente_nombre})` : '';
+        const pushTitulo = "💰 Presupuesto Aprobado";
+        const pushCuerpo = `Nuevo proyecto "${newRecord.titulo}"${contactoInfo} registrado con presupuesto aprobado.`;
+        const waTexto = `💰 *Presupuesto Aprobado*\nNuevo proyecto *"${newRecord.titulo}"* registrado con presupuesto aprobado.\n${contactoInfo ? `*Contacto:* ${newRecord.cliente_empresa || newRecord.cliente_nombre}\n` : ''}*Fase:* ${newRecord.estado || 'En proceso'}`;
+
+        await notificarAdministradores(pushTitulo, pushCuerpo, waTexto);
       }
     }
   })
